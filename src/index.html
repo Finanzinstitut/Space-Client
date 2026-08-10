@@ -90,6 +90,14 @@
           </div>
 
           <div class="field grow">
+            <label>Java (optional)</label>
+            <input id="java-path" type="text" placeholder="Automatisch (empfohlen)" />
+            <p class="hint">Leer lassen! Space Client lädt für jede Minecraft-Version automatisch die
+            passende Java-Runtime von Mojang (Java 8, 17 oder 21) in deinen Installationsordner.
+            Trage hier nur dann einen Pfad zu einer java.exe ein, wenn du bewusst eine eigene JVM nutzen willst.</p>
+          </div>
+
+          <div class="field grow">
             <label>Zugewiesener RAM (MB)</label>
             <input id="ram-slider" type="range" min="1024" max="16384" step="512" />
             <span id="ram-value"></span>

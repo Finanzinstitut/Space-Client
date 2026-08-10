@@ -51,6 +51,7 @@ async function init() {
     $("install-path").value = config.install_path;
     $("username").value = config.default_username;
     $("ram-slider").value = config.max_ram_mb;
+    $("java-path").value = config.custom_java_path || "";
     $("ram-value").textContent = config.max_ram_mb + " MB";
   } catch (e) {
     setStatus("Konnte Konfiguration nicht laden: " + e, "error");
@@ -78,6 +79,7 @@ listen("install://progress", (event) => {
 
   const labels = {
     manifest: "Lade Versions-Manifest ...",
+    java: "Lade passende Java-Runtime ...",
     client: "Lade Client-JAR ...",
     libraries: "Lade Bibliotheken ...",
     assets: "Lade Assets ...",
@@ -157,6 +159,7 @@ $("btn-save-settings").addEventListener("click", async () => {
     config = await invoke("set_settings", {
       username: $("username").value.trim() || "Player",
       maxRamMb: parseInt($("ram-slider").value, 10),
+      customJavaPath: $("java-path").value.trim(),
     });
     alert("Einstellungen gespeichert.");
   } catch (e) {

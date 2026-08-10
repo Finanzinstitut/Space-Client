@@ -20,6 +20,10 @@ pub struct LauncherConfig {
     pub install_path: String,
     pub default_username: String,
     pub max_ram_mb: u32,
+    /// Optional manual override. Empty = use the automatically downloaded
+    /// Mojang runtime, falling back to `java` on PATH.
+    #[serde(default)]
+    pub custom_java_path: String,
 }
 
 impl Default for LauncherConfig {
@@ -31,6 +35,7 @@ impl Default for LauncherConfig {
             install_path: default_path.to_string_lossy().to_string(),
             default_username: "Player".to_string(),
             max_ram_mb: 4096,
+            custom_java_path: String::new(),
         }
     }
 }
@@ -79,12 +84,18 @@ impl LauncherConfig {
         self.install_dir().join("instances")
     }
 
+    /// Downloaded Java runtimes live here, inside the user-chosen install path.
+    pub fn runtimes_dir(&self) -> PathBuf {
+        self.install_dir().join("runtimes")
+    }
+
     pub fn ensure_dirs(&self) -> anyhow::Result<()> {
         fs::create_dir_all(self.versions_dir())?;
         fs::create_dir_all(self.libraries_dir())?;
         fs::create_dir_all(self.assets_dir().join("objects"))?;
         fs::create_dir_all(self.assets_dir().join("indexes"))?;
         fs::create_dir_all(self.instances_dir())?;
+        fs::create_dir_all(self.runtimes_dir())?;
         Ok(())
     }
 }

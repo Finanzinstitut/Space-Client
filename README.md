@@ -11,13 +11,13 @@ Funktioniert bereits:
 - **Live-Fortschrittsanzeige** über Tauri-Events (`install://progress`).
 - **Spielstart** mit korrektem Classpath, entpackten Natives, Argument-Substitution (modernes `arguments`-Format *und* altes `minecraftArguments`).
 - **Frei wählbarer Installationspfad** — Versionen, Libraries, Assets und Instanzen landen dort, wo du willst (z.B. `D:\SpaceClient`). Auf `C:` liegt nur eine winzige `settings.json` mit dem Pfad-Zeiger.
+- **Automatischer Java-Download**: Space Client liest das `javaVersion`-Feld der Version und holt die passende Mojang-Runtime (`jre-legacy` = Java 8, `java-runtime-gamma` = 17, `java-runtime-delta` = 21) in den gewählten Installationsordner. Kein manuelles JDK mehr nötig. Optionaler Override-Pfad in den Settings.
 - **RAM-Zuweisung** per Slider (`-Xmx`).
 - Weltraum-UI: animiertes Sternenfeld, Planeten-Glow, Violett/Cyan-Farbschema.
 
 ## Wichtige Einschränkungen (ehrlich gesagt)
 
 - **Kein Microsoft-Login.** Der Start läuft aktuell im *Offline-Modus* mit einem lokal generierten UUID. Das reicht für Singleplayer und Server mit `online-mode=false` (z.B. viele Test-Server), **nicht** für normale Online-Server oder Realms. Echter MS-OAuth-Flow (Device Code → Xbox Live → XSTS → Minecraft-Token) ist der nächste große Baustein.
-- **Java muss auf dem PATH liegen.** Automatisches Herunterladen der passenden JRE (Java 8/17/21 je nach Version) ist noch nicht drin.
 - **Noch nicht gebaut:** Mod-Loader-Installation (Fabric/Forge/Quilt/NeoForge), Modrinth/CurseForge-Integration, Instanz-Verwaltung, Cosmetics, Performance-Mods, eigenes In-Game-HUD.
 - Der Code ist **noch nie kompiliert worden** — Rust/Cargo standen mir hier nicht zur Verfügung. Der erste CI-Lauf wird sehr wahrscheinlich noch ein paar Compilerfehler zeigen; die arbeiten wir dann durch, so wie bei deinen Fabric-Mods auch.
 
@@ -46,6 +46,8 @@ space-client/
 │       └── launcher/
 │           ├── config.rs       # Custom Install Path + Settings
 │           ├── manifest.rs     # Mojang Version-Manifest
+│           ├── java.rs         # Automatischer JRE-Download + Java-Auflösung
+│           ├── progress.rs     # Geteilte Fortschritts-Events
 │           ├── download.rs     # Client/Libraries/Assets Downloader
 │           └── launch.rs       # Classpath, Natives, Prozessstart
 └── .github/workflows/build.yml
@@ -56,8 +58,8 @@ space-client/
 | Schritt | Inhalt |
 |---|---|
 | 1 ✅ | Kern-Launcher: Versionen, Download, Start, Custom-Pfad |
-| 2 | Microsoft-Account-Login (Device-Code-Flow) |
-| 3 | Automatischer JRE-Download passend zur Version |
+| 2 ✅ | Automatischer JRE-Download passend zur Version |
+| 3 | Microsoft-Account-Login (Device-Code-Flow) |
 | 4 | Mod-Loader: Fabric / Forge / Quilt / NeoForge installieren |
 | 5 | Instanzen: mehrere getrennte Profile mit eigenem Mods-Ordner |
 | 6 | Modrinth-API: Suche + Ein-Klick-Install in eine Instanz |

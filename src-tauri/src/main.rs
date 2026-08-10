@@ -34,10 +34,16 @@ async fn set_install_path(path: String, state: State<'_, AppState>) -> Result<La
 }
 
 #[tauri::command]
-async fn set_settings(username: String, max_ram_mb: u32, state: State<'_, AppState>) -> Result<LauncherConfig, String> {
+async fn set_settings(
+    username: String,
+    max_ram_mb: u32,
+    custom_java_path: String,
+    state: State<'_, AppState>,
+) -> Result<LauncherConfig, String> {
     let mut cfg = state.config.lock().unwrap();
     cfg.default_username = username;
     cfg.max_ram_mb = max_ram_mb;
+    cfg.custom_java_path = custom_java_path;
     cfg.save().map_err(|e| e.to_string())?;
     Ok(cfg.clone())
 }

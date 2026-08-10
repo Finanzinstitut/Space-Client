@@ -1,4 +1,5 @@
 use crate::launcher::config::LauncherConfig;
+use crate::launcher::java;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
@@ -184,9 +185,11 @@ pub fn launch_version(cfg: &LauncherConfig, version_id: &str, username: &str) ->
 
     jvm_args.push(format!("-Xmx{}M", cfg.max_ram_mb));
 
-    let java_bin = "java"; // must be on PATH; auto-download of a matching JRE can be added later
+    // Uses the runtime downloaded for exactly this version; falls back to
+    // a manual override or to `java` on PATH.
+    let java_bin = java::resolve_java_binary(cfg, &details);
 
-    let mut cmd = std::process::Command::new(java_bin);
+    let mut cmd = std::process::Command::new(&java_bin);
     cmd.args(&jvm_args);
     cmd.arg(&main_class);
     cmd.args(&game_args);

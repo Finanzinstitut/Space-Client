@@ -1,24 +1,13 @@
 use crate::launcher::config::LauncherConfig;
+use crate::launcher::java;
 use crate::launcher::manifest::{fetch_version_details, fetch_version_manifest};
+use crate::launcher::progress::{emit_progress, InstallProgress};
 use futures_util::StreamExt;
-use serde::Serialize;
 use sha1::{Digest, Sha1};
 use std::path::Path;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct InstallProgress {
-    pub stage: String,   // "manifest" | "client" | "libraries" | "assets" | "done"
-    pub current: u64,
-    pub total: u64,
-    pub file: String,
-}
-
-fn emit_progress(app: &AppHandle, p: InstallProgress) {
-    let _ = app.emit("install://progress", p);
-}
 
 fn current_os_name() -> &'static str {
     if cfg!(target_os = "windows") {
@@ -113,6 +102,13 @@ pub async fn install_version(app: AppHandle, cfg: LauncherConfig, version_id: St
     fs::create_dir_all(&version_dir).await?;
     let version_json_path = version_dir.join(format!("{}.json", version_id));
     fs::write(&version_json_path, serde_json::to_vec_pretty(&details)?).await?;
+
+    // --- java runtime (matching this version's requirement) ---
+    match java::ensure_java(&app, &cfg, &details).await {
+        Ok(Some(path)) => println!("Using java: {}", path),
+        Ok(None) => println!("No bundled runtime for this platform - falling back to system java"),
+        Err(e) => eprintln!("Java-Runtime konnte nicht geladen werden: {} - versuche System-Java", e),
+    }
 
     // --- client jar ---
     emit_progress(&app, InstallProgress { stage: "client".into(), current: 0, total: 1, file: format!("{}.jar", version_id) });
