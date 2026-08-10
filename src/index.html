@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <title>Space Client</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="stars"></div>
+  <div class="stars2"></div>
+  <div class="planet-glow"></div>
+
+  <div class="app">
+    <aside class="sidebar">
+      <div class="logo">
+        <div class="logo-orb"></div>
+        <span>SPACE CLIENT</span>
+      </div>
+      <nav>
+        <button class="nav-item active" data-view="play">🚀 Play</button>
+        <button class="nav-item" data-view="mods">🛰️ Mods</button>
+        <button class="nav-item" data-view="settings">⚙️ Settings</button>
+      </nav>
+      <div class="sidebar-footer">v0.1.0 · MVP</div>
+    </aside>
+
+    <main class="content">
+      <!-- PLAY VIEW -->
+      <section id="view-play" class="view active">
+        <h1>Starte ins All 🌌</h1>
+        <p class="subtitle">Wähle eine Minecraft-Version und starte los.</p>
+
+        <div class="card">
+          <div class="row">
+            <div class="field grow">
+              <label>Version</label>
+              <select id="version-select"></select>
+            </div>
+            <div class="field">
+              <label>&nbsp;</label>
+              <label class="checkbox">
+                <input type="checkbox" id="show-snapshots" />
+                Snapshots anzeigen
+              </label>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field grow">
+              <label>Benutzername</label>
+              <input id="username" type="text" placeholder="Player" />
+            </div>
+          </div>
+
+          <div id="progress-wrap" class="progress-wrap hidden">
+            <div class="progress-label" id="progress-label">Installiere...</div>
+            <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+          </div>
+
+          <div class="row actions">
+            <button id="btn-install" class="btn secondary">Installieren</button>
+            <button id="btn-launch" class="btn primary">🚀 Starten</button>
+          </div>
+          <div id="status-line" class="status-line"></div>
+        </div>
+      </section>
+
+      <!-- MODS VIEW -->
+      <section id="view-mods" class="view">
+        <h1>Mods 🛰️</h1>
+        <p class="subtitle">Modrinth &amp; CurseForge Integration folgt im nächsten Ausbauschritt.</p>
+        <div class="card">
+          <p>Dieser Bereich wird als nächstes gebaut: Mod-Suche, Installation in die aktuelle Instanz,
+          und automatische Auswahl des passenden Mod-Loaders (Fabric/Forge/Quilt/NeoForge).</p>
+        </div>
+      </section>
+
+      <!-- SETTINGS VIEW -->
+      <section id="view-settings" class="view">
+        <h1>Einstellungen ⚙️</h1>
+        <div class="card">
+          <div class="field grow">
+            <label>Installationspfad</label>
+            <div class="row">
+              <input id="install-path" type="text" readonly />
+              <button id="btn-pick-path" class="btn secondary small">Ordner wählen</button>
+            </div>
+            <p class="hint">Hier legt Space Client Versionen, Bibliotheken, Assets und Instanzen ab.
+            Wähle z.B. einen Ordner auf D:\ statt C:\, um nicht die Systemplatte zu belasten.</p>
+          </div>
+
+          <div class="field grow">
+            <label>Zugewiesener RAM (MB)</label>
+            <input id="ram-slider" type="range" min="1024" max="16384" step="512" />
+            <span id="ram-value"></span>
+          </div>
+
+          <div class="row actions">
+            <button id="btn-save-settings" class="btn primary">Speichern</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
