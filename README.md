@@ -4,32 +4,38 @@ A custom Minecraft: Java Edition launcher with a space theme, built with **Tauri
 
 ## Features
 
-- **Microsoft account login** (device code flow). Signing in is mandatory — there is no offline mode, so every session is a legitimately authenticated one and works on normal online-mode servers.
+- **Microsoft account login** (device code flow), implemented end to end: Microsoft → Xbox Live → XSTS → Minecraft Services, with refresh tokens so you stay signed in. Signing in is mandatory; there is no offline mode. ⚠️ *Currently blocked pending Mojang API approval — see Status below.*
 - **Independent instances.** Every instance is its own folder with its own mods, worlds, RAM allocation and — importantly — its own storage location. You can put one instance on `D:\`, another on an external drive.
 - **Every Minecraft version**, pulled live from Mojang's official version manifest (releases, snapshots, betas, alphas).
 - **Mod loaders**: Fabric and Quilt are installed automatically when you create an instance.
+- **Modrinth browser** built in: search, one-click install into a chosen instance, automatic download of required dependencies, and removal of installed mods. Results are filtered to the instance's Minecraft version and loader, so nothing incompatible shows up.
+- **Mod updates**: check all installed mods against Modrinth and update them individually or all at once. The old jar is only deleted after the new one is written.
 - **Automatic Java runtime download.** The launcher reads the `javaVersion` field of each Minecraft version and fetches the matching Mojang runtime (Java 8, 17 or 21). No manual JDK install needed.
 - **Free choice of the shared data folder**, so nothing has to sit on `C:`.
 - **Update check on startup** against this repository's GitHub releases.
 - **English by default**, with German available in Settings.
 
-## ⚠️ Required setup before login works
+## Status: waiting for Mojang API approval ⏳
 
-Mojang requires every third-party launcher to use its **own** Azure application. Register one (free) and paste the client ID into `src-tauri/src/launcher/auth.rs`:
+**Signing in does not work yet.** Everything up to the final step succeeds — Microsoft login, Xbox Live, XSTS — but `api.minecraftservices.com/authentication/login_with_xbox` returns **403 Forbidden**.
 
-1. Go to https://portal.azure.com → **Azure Active Directory** → **App registrations** → **New registration**
-2. Supported account types: **Personal Microsoft accounts only**
-3. No redirect URI is needed for the device code flow
-4. Open **Authentication** → set **Allow public client flows** to **Yes**
-5. Copy the **Application (client) ID** into the `AZURE_CLIENT_ID` constant in `auth.rs`
+This is not a bug in the launcher. Since Mojang tightened access, newly registered Azure applications must be approved before they may use the Minecraft API. Launchers that existed before that change (Prism, MultiMC and others) kept their access; new ones have to apply.
 
-Without this step, Microsoft rejects the login with `unauthorized_client`.
+**An approval request for this application has been submitted** via the official form at https://aka.ms/mce-reviewappid. Until it is granted, the login will keep failing with 403 no matter what the code does. There is no legitimate way around it — using another project's client ID would violate Microsoft's terms.
+
+Everything else in the launcher — instances, versions, Java runtimes, Fabric/Quilt, the Modrinth browser — works independently of this and can be used and tested already.
+
+## Azure application
+
+The launcher authenticates through its own registered Azure application; the client ID sits in `src-tauri/src/launcher/auth.rs` and is already configured. A client ID is not a secret — it identifies the app, it does not authorise anything. (A client *secret* would be different; this flow does not use one.)
+
+If you ever need to register a replacement, the app must use **Personal Microsoft accounts only** and have **Allow public client flows** enabled under *Authentication*, otherwise Microsoft rejects logins with `unauthorized_client` — and it will need its own approval request as described above.
 
 ## Current limitations
 
 - **Forge and NeoForge are not supported yet.** Their installers run bytecode-patching processors, which is a much larger job than Fabric's simple profile JSON. Only Vanilla, Fabric and Quilt work today.
-- **Modrinth and CurseForge browsing is not built yet** — instance folders are created with a `mods` directory you can drop jars into manually for now.
-- **The update check only notifies**, it does not install the update. It opens the release page in your browser.
+- **CurseForge is not integrated yet** — it needs a personal API key, unlike Modrinth's open API.
+- **The launcher update check only notifies**, it does not install anything — it opens the release page in your browser. A real auto-updater needs `tauri-plugin-updater` plus a signing key pair, since Tauri only accepts signed updates.
 - Skin avatars in the account view are loaded from Crafatar, a third-party service.
 
 ## Data layout
@@ -82,6 +88,7 @@ space-client/
 │           ├── config.rs       # settings, shared paths, language
 │           ├── instance.rs     # instance registry and folders
 │           ├── loader.rs       # Fabric / Quilt installation
+│           ├── mods.rs         # Modrinth search, install, dependencies
 │           ├── java.rs         # automatic JRE download
 │           ├── manifest.rs     # Mojang version manifest
 │           ├── download.rs     # client, libraries, assets
@@ -101,7 +108,7 @@ space-client/
 | 4 ✅ | Instances with own folder, RAM and loader |
 | 5 ✅ | Fabric / Quilt installation |
 | 6 ✅ | Update check on startup |
-| 7 | Modrinth API: search and one-click install into an instance |
+| 7 ✅ | Modrinth API: search and one-click install into an instance |
 | 8 | CurseForge API (needs an API key) |
 | 9 | Forge / NeoForge support |
 | 10 | Cosmetics, client mods, in-game HUD |
