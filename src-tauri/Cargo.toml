@@ -24,10 +24,6 @@ uuid = { version = "1", features = ["v4"] }
 zip = "0.6"
 anyhow = "1"
 
-[lib]
-name = "space_client_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
 [[bin]]
 name = "space-client"
 path = "src/main.rs"
