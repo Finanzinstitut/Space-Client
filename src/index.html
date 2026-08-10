@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <title>Space Client</title>
@@ -17,98 +17,184 @@
         <span>SPACE CLIENT</span>
       </div>
       <nav>
-        <button class="nav-item active" data-view="play">🚀 Play</button>
-        <button class="nav-item" data-view="mods">🛰️ Mods</button>
-        <button class="nav-item" data-view="settings">⚙️ Settings</button>
+        <button class="nav-item active" data-view="instances">🚀 <span data-i18n="nav_instances"></span></button>
+        <button class="nav-item" data-view="account">👤 <span data-i18n="nav_account"></span></button>
+        <button class="nav-item" data-view="settings">⚙️ <span data-i18n="nav_settings"></span></button>
       </nav>
-      <div class="sidebar-footer">v0.1.0 · MVP</div>
+      <div class="account-chip" id="account-chip">
+        <span class="dot" id="account-dot"></span>
+        <span id="account-name" data-i18n="not_signed_in"></span>
+      </div>
+      <div class="sidebar-footer" id="version-label">v0.1.0</div>
     </aside>
 
     <main class="content">
-      <!-- PLAY VIEW -->
-      <section id="view-play" class="view active">
-        <h1>Starte ins All 🌌</h1>
-        <p class="subtitle">Wähle eine Minecraft-Version und starte los.</p>
+      <!-- INSTANCES -->
+      <section id="view-instances" class="view active">
+        <div class="head-row">
+          <div>
+            <h1 data-i18n="instances_title"></h1>
+            <p class="subtitle" data-i18n="instances_sub"></p>
+          </div>
+          <button id="btn-new-instance" class="btn primary" data-i18n="btn_new_instance"></button>
+        </div>
+        <div id="instance-list" class="instance-list"></div>
+        <div id="global-status" class="status-line"></div>
+        <div id="progress-wrap" class="progress-wrap hidden">
+          <div class="progress-label" id="progress-label"></div>
+          <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        </div>
+      </section>
+
+      <!-- ACCOUNT -->
+      <section id="view-account" class="view">
+        <h1 data-i18n="account_title"></h1>
+        <p class="subtitle" data-i18n="account_sub"></p>
 
         <div class="card">
-          <div class="row">
-            <div class="field grow">
-              <label>Version</label>
-              <select id="version-select"></select>
-            </div>
+          <div id="account-signed-out">
+            <button id="btn-signin" class="btn primary" data-i18n="btn_signin"></button>
+          </div>
+
+          <div id="account-signed-in" class="hidden">
             <div class="field">
-              <label>&nbsp;</label>
-              <label class="checkbox">
-                <input type="checkbox" id="show-snapshots" />
-                Snapshots anzeigen
-              </label>
+              <label data-i18n="signed_in_as"></label>
+              <div class="account-row">
+                <img id="account-skin" alt="" width="48" height="48" />
+                <strong id="account-username"></strong>
+              </div>
             </div>
+            <button id="btn-signout" class="btn secondary" data-i18n="btn_signout"></button>
           </div>
 
-          <div class="row">
-            <div class="field grow">
-              <label>Benutzername</label>
-              <input id="username" type="text" placeholder="Player" />
+          <div id="login-flow" class="hidden login-flow">
+            <p data-i18n="login_step1"></p>
+            <div class="row">
+              <code id="login-url" class="code-box"></code>
+              <button id="btn-open-browser" class="btn secondary small" data-i18n="btn_open_browser"></button>
             </div>
+            <p data-i18n="login_step2"></p>
+            <div class="row">
+              <code id="login-code" class="code-box big"></code>
+              <button id="btn-copy-code" class="btn secondary small" data-i18n="btn_copy"></button>
+            </div>
+            <p class="waiting" data-i18n="login_waiting"></p>
           </div>
 
-          <div id="progress-wrap" class="progress-wrap hidden">
-            <div class="progress-label" id="progress-label">Installiere...</div>
-            <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
-          </div>
-
-          <div class="row actions">
-            <button id="btn-install" class="btn secondary">Installieren</button>
-            <button id="btn-launch" class="btn primary">🚀 Starten</button>
-          </div>
-          <div id="status-line" class="status-line"></div>
+          <div id="account-status" class="status-line"></div>
         </div>
       </section>
 
-      <!-- MODS VIEW -->
-      <section id="view-mods" class="view">
-        <h1>Mods 🛰️</h1>
-        <p class="subtitle">Modrinth &amp; CurseForge Integration folgt im nächsten Ausbauschritt.</p>
-        <div class="card">
-          <p>Dieser Bereich wird als nächstes gebaut: Mod-Suche, Installation in die aktuelle Instanz,
-          und automatische Auswahl des passenden Mod-Loaders (Fabric/Forge/Quilt/NeoForge).</p>
-        </div>
-      </section>
-
-      <!-- SETTINGS VIEW -->
+      <!-- SETTINGS -->
       <section id="view-settings" class="view">
-        <h1>Einstellungen ⚙️</h1>
+        <h1 data-i18n="settings_title"></h1>
         <div class="card">
           <div class="field grow">
-            <label>Installationspfad</label>
+            <label data-i18n="field_install_path"></label>
             <div class="row">
               <input id="install-path" type="text" readonly />
-              <button id="btn-pick-path" class="btn secondary small">Ordner wählen</button>
+              <button id="btn-pick-path" class="btn secondary small" data-i18n="btn_choose"></button>
             </div>
-            <p class="hint">Hier legt Space Client Versionen, Bibliotheken, Assets und Instanzen ab.
-            Wähle z.B. einen Ordner auf D:\ statt C:\, um nicht die Systemplatte zu belasten.</p>
+            <p class="hint" data-i18n="install_path_hint"></p>
           </div>
 
           <div class="field grow">
-            <label>Java (optional)</label>
-            <input id="java-path" type="text" placeholder="Automatisch (empfohlen)" />
-            <p class="hint">Leer lassen! Space Client lädt für jede Minecraft-Version automatisch die
-            passende Java-Runtime von Mojang (Java 8, 17 oder 21) in deinen Installationsordner.
-            Trage hier nur dann einen Pfad zu einer java.exe ein, wenn du bewusst eine eigene JVM nutzen willst.</p>
+            <label data-i18n="field_java"></label>
+            <input id="java-path" type="text" data-i18n-ph="java_ph" />
+            <p class="hint" data-i18n="java_hint"></p>
           </div>
 
           <div class="field grow">
-            <label>Zugewiesener RAM (MB)</label>
+            <label data-i18n="field_default_ram"></label>
             <input id="ram-slider" type="range" min="1024" max="16384" step="512" />
             <span id="ram-value"></span>
           </div>
 
-          <div class="row actions">
-            <button id="btn-save-settings" class="btn primary">Speichern</button>
+          <div class="field grow">
+            <label data-i18n="field_language"></label>
+            <select id="language-select">
+              <option value="en">English</option>
+              <option value="de">Deutsch</option>
+            </select>
           </div>
+
+          <div class="field grow">
+            <label class="checkbox">
+              <input type="checkbox" id="check-updates" />
+              <span data-i18n="field_updates"></span>
+            </label>
+          </div>
+
+          <div class="row actions">
+            <button id="btn-save-settings" class="btn primary" data-i18n="btn_save"></button>
+          </div>
+          <div id="settings-status" class="status-line"></div>
         </div>
       </section>
     </main>
+  </div>
+
+  <!-- CREATE INSTANCE MODAL -->
+  <div id="modal-backdrop" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2 data-i18n="create_title"></h2>
+
+      <div class="field grow">
+        <label data-i18n="field_name"></label>
+        <input id="new-name" type="text" data-i18n-ph="field_name_ph" />
+      </div>
+
+      <div class="field grow">
+        <label data-i18n="field_version"></label>
+        <select id="new-version"></select>
+        <label class="checkbox">
+          <input type="checkbox" id="new-snapshots" />
+          <span data-i18n="field_snapshots"></span>
+        </label>
+      </div>
+
+      <div class="field grow">
+        <label data-i18n="field_loader"></label>
+        <select id="new-loader">
+          <option value="vanilla">Vanilla</option>
+          <option value="fabric">Fabric</option>
+          <option value="quilt">Quilt</option>
+        </select>
+      </div>
+
+      <div class="field grow">
+        <label data-i18n="field_ram"></label>
+        <input id="new-ram" type="range" min="1024" max="16384" step="512" />
+        <span id="new-ram-value"></span>
+      </div>
+
+      <div class="field grow">
+        <label data-i18n="field_location"></label>
+        <div class="row">
+          <input id="new-path" type="text" readonly />
+          <button id="btn-pick-instance-path" class="btn secondary small" data-i18n="btn_choose"></button>
+        </div>
+        <p class="hint" data-i18n="location_hint"></p>
+      </div>
+
+      <div class="row actions">
+        <button id="btn-cancel-create" class="btn secondary" data-i18n="btn_cancel"></button>
+        <button id="btn-confirm-create" class="btn primary" data-i18n="btn_create"></button>
+      </div>
+      <div id="create-status" class="status-line"></div>
+    </div>
+  </div>
+
+  <!-- UPDATE BANNER -->
+  <div id="update-banner" class="update-banner hidden">
+    <div>
+      <strong data-i18n="update_available"></strong>
+      <div id="update-text"></div>
+    </div>
+    <div class="row">
+      <button id="btn-update-later" class="btn secondary small" data-i18n="btn_later"></button>
+      <button id="btn-update-download" class="btn primary small" data-i18n="btn_download_update"></button>
+    </div>
   </div>
 
   <script type="module" src="main.js"></script>

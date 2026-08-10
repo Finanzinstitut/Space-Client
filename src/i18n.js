@@ -1,0 +1,187 @@
+// English is always the default. German is opt-in via Settings.
+export const translations = {
+  en: {
+    nav_instances: "Instances",
+    nav_account: "Account",
+    nav_settings: "Settings",
+
+    instances_title: "Your Instances",
+    instances_sub: "Each instance is a separate folder with its own mods, saves and RAM.",
+    instances_empty: "No instances yet. Create your first one to get started.",
+    btn_new_instance: "+ New Instance",
+    btn_play: "Play",
+    btn_install: "Install",
+    btn_folder: "Open Folder",
+    btn_delete: "Delete",
+    not_installed: "Not installed",
+    ready: "Ready",
+
+    create_title: "Create Instance",
+    field_name: "Instance name",
+    field_name_ph: "My Fabric Pack",
+    field_version: "Minecraft version",
+    field_snapshots: "Show snapshots and old versions",
+    field_loader: "Mod loader",
+    field_ram: "RAM for this instance",
+    field_location: "Storage location",
+    location_default: "Default folder",
+    location_hint:
+      "The instance folder is created here. Pick any drive you like — instances are fully independent of each other.",
+    btn_choose: "Choose...",
+    btn_create: "Create",
+    btn_cancel: "Cancel",
+
+    account_title: "Microsoft Account",
+    account_sub: "Signing in is required to play. Minecraft: Java Edition must be owned by this account.",
+    signed_in_as: "Signed in as",
+    btn_signin: "Sign in with Microsoft",
+    btn_signout: "Sign out",
+    login_step1: "1. Open this page in your browser:",
+    login_step2: "2. Enter this code:",
+    login_waiting: "Waiting for you to finish signing in...",
+    btn_open_browser: "Open page",
+    btn_copy: "Copy",
+    copied: "Copied!",
+    login_success: "Signed in successfully.",
+    not_signed_in: "Not signed in",
+    signin_required: "Please sign in with your Microsoft account first.",
+
+    settings_title: "Settings",
+    field_install_path: "Shared data folder",
+    install_path_hint:
+      "Versions, libraries, assets and Java runtimes are cached here and shared by all instances. Instance folders are chosen separately.",
+    field_java: "Java (optional)",
+    java_ph: "Automatic (recommended)",
+    java_hint:
+      "Leave empty. Space Client downloads the Java runtime each Minecraft version requires. Only set a path here if you want to force your own JVM.",
+    field_default_ram: "Default RAM for new instances",
+    field_language: "Language",
+    field_updates: "Check for launcher updates on startup",
+    btn_save: "Save",
+    saved: "Settings saved.",
+
+    update_available: "Update available",
+    update_text: "Version {v} is available. You are running {c}.",
+    btn_download_update: "Download",
+    btn_later: "Later",
+
+    stage_manifest: "Loading version manifest",
+    stage_java: "Downloading Java runtime",
+    stage_client: "Downloading client",
+    stage_libraries: "Downloading libraries",
+    stage_assets: "Downloading assets",
+    stage_loader: "Installing mod loader",
+    stage_done: "Done",
+
+    installing: "Installing {name}...",
+    install_done: "{name} is ready to play.",
+    launching: "Launching {name}...",
+    launched: "{name} started. Have fun!",
+    confirm_delete: "Delete instance \"{name}\"? This also removes its folder and all mods and worlds inside it.",
+  },
+
+  de: {
+    nav_instances: "Instanzen",
+    nav_account: "Konto",
+    nav_settings: "Einstellungen",
+
+    instances_title: "Deine Instanzen",
+    instances_sub: "Jede Instanz ist ein eigener Ordner mit eigenen Mods, Welten und RAM.",
+    instances_empty: "Noch keine Instanzen. Erstelle deine erste, um loszulegen.",
+    btn_new_instance: "+ Neue Instanz",
+    btn_play: "Spielen",
+    btn_install: "Installieren",
+    btn_folder: "Ordner öffnen",
+    btn_delete: "Löschen",
+    not_installed: "Nicht installiert",
+    ready: "Bereit",
+
+    create_title: "Instanz erstellen",
+    field_name: "Name der Instanz",
+    field_name_ph: "Mein Fabric Pack",
+    field_version: "Minecraft-Version",
+    field_snapshots: "Snapshots und alte Versionen anzeigen",
+    field_loader: "Mod-Loader",
+    field_ram: "RAM für diese Instanz",
+    field_location: "Speicherort",
+    location_default: "Standardordner",
+    location_hint:
+      "Hier wird der Instanz-Ordner angelegt. Wähle eine beliebige Platte — Instanzen sind vollständig unabhängig voneinander.",
+    btn_choose: "Auswählen...",
+    btn_create: "Erstellen",
+    btn_cancel: "Abbrechen",
+
+    account_title: "Microsoft-Konto",
+    account_sub: "Zum Spielen ist eine Anmeldung nötig. Das Konto muss Minecraft: Java Edition besitzen.",
+    signed_in_as: "Angemeldet als",
+    btn_signin: "Mit Microsoft anmelden",
+    btn_signout: "Abmelden",
+    login_step1: "1. Öffne diese Seite im Browser:",
+    login_step2: "2. Gib diesen Code ein:",
+    login_waiting: "Warte auf den Abschluss der Anmeldung...",
+    btn_open_browser: "Seite öffnen",
+    btn_copy: "Kopieren",
+    copied: "Kopiert!",
+    login_success: "Erfolgreich angemeldet.",
+    not_signed_in: "Nicht angemeldet",
+    signin_required: "Bitte melde dich zuerst mit deinem Microsoft-Konto an.",
+
+    settings_title: "Einstellungen",
+    field_install_path: "Gemeinsamer Datenordner",
+    install_path_hint:
+      "Versionen, Bibliotheken, Assets und Java-Runtimes werden hier zwischengespeichert und von allen Instanzen geteilt. Instanz-Ordner wählst du separat.",
+    field_java: "Java (optional)",
+    java_ph: "Automatisch (empfohlen)",
+    java_hint:
+      "Leer lassen. Space Client lädt automatisch die Java-Runtime, die die jeweilige Minecraft-Version braucht. Trage hier nur etwas ein, wenn du bewusst eine eigene JVM erzwingen willst.",
+    field_default_ram: "Standard-RAM für neue Instanzen",
+    field_language: "Sprache",
+    field_updates: "Beim Start nach Launcher-Updates suchen",
+    btn_save: "Speichern",
+    saved: "Einstellungen gespeichert.",
+
+    update_available: "Update verfügbar",
+    update_text: "Version {v} ist verfügbar. Du nutzt {c}.",
+    btn_download_update: "Herunterladen",
+    btn_later: "Später",
+
+    stage_manifest: "Lade Versions-Manifest",
+    stage_java: "Lade Java-Runtime",
+    stage_client: "Lade Client",
+    stage_libraries: "Lade Bibliotheken",
+    stage_assets: "Lade Assets",
+    stage_loader: "Installiere Mod-Loader",
+    stage_done: "Fertig",
+
+    installing: "Installiere {name}...",
+    install_done: "{name} ist startbereit.",
+    launching: "Starte {name}...",
+    launched: "{name} gestartet. Viel Spaß!",
+    confirm_delete: "Instanz \"{name}\" löschen? Damit verschwindet auch ihr Ordner samt aller Mods und Welten.",
+  },
+};
+
+let currentLang = "en";
+
+export function setLanguage(lang) {
+  currentLang = translations[lang] ? lang : "en";
+}
+
+export function t(key, vars = {}) {
+  const dict = translations[currentLang] || translations.en;
+  let text = dict[key] ?? translations.en[key] ?? key;
+  for (const [k, v] of Object.entries(vars)) {
+    text = text.replace(new RegExp("\\{" + k + "\\}", "g"), v);
+  }
+  return text;
+}
+
+/// Applies translations to every element carrying data-i18n / data-i18n-ph.
+export function applyTranslations(root = document) {
+  root.querySelectorAll("[data-i18n]").forEach((el) => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  root.querySelectorAll("[data-i18n-ph]").forEach((el) => {
+    el.placeholder = t(el.dataset.i18nPh);
+  });
+}

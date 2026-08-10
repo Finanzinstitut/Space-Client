@@ -1,6 +1,10 @@
+pub mod auth;
 pub mod config;
 pub mod download;
+pub mod instance;
 pub mod java;
 pub mod launch;
+pub mod loader;
 pub mod manifest;
 pub mod progress;
+pub mod update;

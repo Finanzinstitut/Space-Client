@@ -1,10 +1,12 @@
+use crate::launcher::auth::Account;
 use crate::launcher::config::LauncherConfig;
+use crate::launcher::instance::Instance;
 use crate::launcher::java;
+use crate::launcher::loader::maven_to_path;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::Stdio;
-use uuid::Uuid;
 
 fn current_os_name() -> &'static str {
     if cfg!(target_os = "windows") {
@@ -17,11 +19,7 @@ fn current_os_name() -> &'static str {
 }
 
 fn classpath_separator() -> &'static str {
-    if cfg!(target_os = "windows") {
-        ";"
-    } else {
-        ":"
-    }
+    if cfg!(target_os = "windows") { ";" } else { ":" }
 }
 
 fn rule_allows(rules: &serde_json::Value) -> bool {
@@ -44,29 +42,108 @@ fn rule_allows(rules: &serde_json::Value) -> bool {
     allowed
 }
 
-/// Offline-mode identity. NOTE: this does not perform real Microsoft account
-/// authentication - it generates a local "offline" UUID like the vanilla
-/// launcher does when you play without logging in. Real MS-auth (needed for
-/// servers with online-mode=true) is a separate module to add later.
-fn offline_uuid(username: &str) -> String {
-    // Deterministic UUID v3-ish from "OfflinePlayer:<name>" (Mojang's own scheme),
-    // simplified here to a stable v4 derived from a hash of the name.
-    use sha1::{Digest, Sha1};
-    let mut hasher = Sha1::new();
-    hasher.update(format!("OfflinePlayer:{}", username).as_bytes());
-    let digest = hasher.finalize();
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&digest[0..16]);
-    // Set UUID version/variant bits like the vanilla launcher does
-    bytes[6] = (bytes[6] & 0x0f) | 0x30;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    Uuid::from_bytes(bytes).to_string()
+/// Loads a version JSON and, if it inherits from another version (as all
+/// Fabric/Quilt profiles do), merges the parent into it.
+fn load_version_chain(cfg: &LauncherConfig, version_id: &str) -> anyhow::Result<serde_json::Value> {
+    let path = cfg
+        .versions_dir()
+        .join(version_id)
+        .join(format!("{}.json", version_id));
+    let mut current: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+
+    let mut depth = 0;
+    while let Some(parent_id) = current
+        .get("inheritsFrom")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+    {
+        depth += 1;
+        if depth > 8 {
+            anyhow::bail!("Version inheritance chain too deep");
+        }
+        let parent_path = cfg
+            .versions_dir()
+            .join(&parent_id)
+            .join(format!("{}.json", parent_id));
+        if !parent_path.exists() {
+            anyhow::bail!(
+                "Base version {} is missing. Please reinstall the instance.",
+                parent_id
+            );
+        }
+        let parent: serde_json::Value = serde_json::from_slice(&fs::read(&parent_path)?)?;
+        current = merge_version(parent, current);
+    }
+    Ok(current)
 }
 
-pub fn launch_version(cfg: &LauncherConfig, version_id: &str, username: &str) -> anyhow::Result<()> {
-    let version_dir = cfg.versions_dir().join(version_id);
-    let version_json_path = version_dir.join(format!("{}.json", version_id));
-    let details: serde_json::Value = serde_json::from_slice(&fs::read(&version_json_path)?)?;
+/// Child values win; library lists and argument lists are concatenated with
+/// the child's entries first, which is what mod loaders expect.
+fn merge_version(parent: serde_json::Value, child: serde_json::Value) -> serde_json::Value {
+    let mut out = parent.clone();
+
+    if let (Some(out_obj), Some(child_obj)) = (out.as_object_mut(), child.as_object()) {
+        for (key, child_val) in child_obj {
+            match key.as_str() {
+                "inheritsFrom" => {
+                    out_obj.remove("inheritsFrom");
+                }
+                "libraries" => {
+                    let mut merged = child_val.as_array().cloned().unwrap_or_default();
+                    if let Some(parent_libs) = parent.get("libraries").and_then(|v| v.as_array()) {
+                        merged.extend(parent_libs.iter().cloned());
+                    }
+                    out_obj.insert("libraries".into(), serde_json::Value::Array(merged));
+                }
+                "arguments" => {
+                    let mut merged = serde_json::Map::new();
+                    for section in ["game", "jvm"] {
+                        let mut items = parent
+                            .pointer(&format!("/arguments/{}", section))
+                            .and_then(|v| v.as_array())
+                            .cloned()
+                            .unwrap_or_default();
+                        if let Some(child_items) =
+                            child_val.get(section).and_then(|v| v.as_array())
+                        {
+                            items.extend(child_items.iter().cloned());
+                        }
+                        merged.insert(section.into(), serde_json::Value::Array(items));
+                    }
+                    out_obj.insert("arguments".into(), serde_json::Value::Object(merged));
+                }
+                _ => {
+                    out_obj.insert(key.clone(), child_val.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Resolves the jar path for a library entry, whether it has a downloads
+/// block (vanilla) or only a maven name (Fabric/Quilt).
+fn library_path(cfg: &LauncherConfig, lib: &serde_json::Value) -> Option<PathBuf> {
+    if let Some(path) = lib.pointer("/downloads/artifact/path").and_then(|v| v.as_str()) {
+        return Some(cfg.libraries_dir().join(path));
+    }
+    let name = lib.get("name").and_then(|v| v.as_str())?;
+    let rel = maven_to_path(name)?;
+    Some(cfg.libraries_dir().join(rel))
+}
+
+pub fn launch_instance(
+    cfg: &LauncherConfig,
+    instance: &Instance,
+    account: &Account,
+) -> anyhow::Result<()> {
+    let version_id = if instance.version_id.is_empty() {
+        instance.mc_version.clone()
+    } else {
+        instance.version_id.clone()
+    };
+
+    let details = load_version_chain(cfg, &version_id)?;
 
     let main_class = details
         .get("mainClass")
@@ -75,10 +152,11 @@ pub fn launch_version(cfg: &LauncherConfig, version_id: &str, username: &str) ->
         .to_string();
 
     // --- classpath + natives ---
-    let natives_dir = cfg.natives_dir(version_id);
+    let natives_dir = cfg.natives_dir(&version_id);
     fs::create_dir_all(&natives_dir)?;
 
     let mut classpath: Vec<String> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
     let empty = vec![];
     let libraries = details.get("libraries").and_then(|v| v.as_array()).unwrap_or(&empty);
 
@@ -88,13 +166,22 @@ pub fn launch_version(cfg: &LauncherConfig, version_id: &str, username: &str) ->
                 continue;
             }
         }
-        if let Some(path) = lib.pointer("/downloads/artifact/path").and_then(|v| v.as_str()) {
-            let full = cfg.libraries_dir().join(path);
+        // Skip duplicate artifacts (loader profiles often repeat vanilla libs)
+        if let Some(name) = lib.get("name").and_then(|v| v.as_str()) {
+            let key: String = name.rsplitn(2, ':').nth(1).unwrap_or(name).to_string();
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.push(key);
+        }
+
+        if let Some(full) = library_path(cfg, lib) {
             if full.exists() {
                 classpath.push(full.to_string_lossy().to_string());
             }
         }
-        // Extract natives jar (old-style) into natives dir
+
+        // Old-style natives jars need extracting next to the game
         if let Some(natives_map) = lib.get("natives") {
             if let Some(classifier_key) = natives_map.get(current_os_name()).and_then(|v| v.as_str()) {
                 let classifier_key = classifier_key.replace("${arch}", "64");
@@ -111,13 +198,22 @@ pub fn launch_version(cfg: &LauncherConfig, version_id: &str, username: &str) ->
         }
     }
 
-    let client_jar = version_dir.join(format!("{}.jar", version_id));
+    // The client jar always comes from the base (vanilla) version
+    let base_id = details
+        .get("jar")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&instance.mc_version)
+        .to_string();
+    let client_jar = cfg
+        .versions_dir()
+        .join(&base_id)
+        .join(format!("{}.jar", base_id));
     classpath.push(client_jar.to_string_lossy().to_string());
     let classpath_str = classpath.join(classpath_separator());
 
-    // --- instance / game directory (this is where saves, resourcepacks etc. live) ---
-    let game_dir = cfg.instances_dir().join("default").join(version_id);
-    fs::create_dir_all(&game_dir)?;
+    // --- this instance's own game directory ---
+    let game_dir = instance.game_dir();
+    fs::create_dir_all(game_dir.join("mods"))?;
 
     let assets_dir = cfg.assets_dir();
     let asset_index_id = details
@@ -126,26 +222,30 @@ pub fn launch_version(cfg: &LauncherConfig, version_id: &str, username: &str) ->
         .unwrap_or("legacy")
         .to_string();
 
-    let uuid = offline_uuid(username);
-    let access_token = "0"; // offline mode placeholder
-
     let placeholders: Vec<(&str, String)> = vec![
-        ("${auth_player_name}", username.to_string()),
-        ("${version_name}", version_id.to_string()),
+        ("${auth_player_name}", account.username.clone()),
+        ("${version_name}", version_id.clone()),
         ("${game_directory}", game_dir.to_string_lossy().to_string()),
         ("${assets_root}", assets_dir.to_string_lossy().to_string()),
         ("${game_assets}", assets_dir.to_string_lossy().to_string()),
         ("${assets_index_name}", asset_index_id.clone()),
-        ("${auth_uuid}", uuid.clone()),
-        ("${auth_access_token}", access_token.to_string()),
-        ("${user_type}", "legacy".to_string()),
-        ("${version_type}", details.get("type").and_then(|v| v.as_str()).unwrap_or("release").to_string()),
+        ("${auth_uuid}", account.uuid.clone()),
+        ("${auth_access_token}", account.access_token.clone()),
+        ("${auth_session}", format!("token:{}:{}", account.access_token, account.uuid)),
+        ("${user_type}", "msa".to_string()),
+        ("${user_properties}", "{}".to_string()),
+        (
+            "${version_type}",
+            details.get("type").and_then(|v| v.as_str()).unwrap_or("release").to_string(),
+        ),
         ("${natives_directory}", natives_dir.to_string_lossy().to_string()),
         ("${launcher_name}", "SpaceClient".to_string()),
-        ("${launcher_version}", "0.1.0".to_string()),
+        ("${launcher_version}", env!("CARGO_PKG_VERSION").to_string()),
         ("${classpath}", classpath_str.clone()),
         ("${clientid}", "-".to_string()),
         ("${auth_xuid}", "-".to_string()),
+        ("${library_directory}", cfg.libraries_dir().to_string_lossy().to_string()),
+        ("${classpath_separator}", classpath_separator().to_string()),
     ];
 
     fn substitute(s: &str, placeholders: &[(&str, String)]) -> String {
@@ -156,20 +256,20 @@ pub fn launch_version(cfg: &LauncherConfig, version_id: &str, username: &str) ->
         out
     }
 
-    // Game arguments: modern (`arguments.game`) or legacy (`minecraftArguments`)
     let mut game_args: Vec<String> = Vec::new();
     if let Some(arr) = details.pointer("/arguments/game").and_then(|v| v.as_array()) {
         for item in arr {
             if let Some(s) = item.as_str() {
                 game_args.push(substitute(s, &placeholders));
             }
-            // skip conditional-rule objects for simplicity (mostly demo/quickplay flags)
         }
     } else if let Some(legacy) = details.get("minecraftArguments").and_then(|v| v.as_str()) {
-        game_args = legacy.split_whitespace().map(|s| substitute(s, &placeholders)).collect();
+        game_args = legacy
+            .split_whitespace()
+            .map(|s| substitute(s, &placeholders))
+            .collect();
     }
 
-    // JVM arguments: modern (`arguments.jvm`) or a sane fallback for legacy versions
     let mut jvm_args: Vec<String> = Vec::new();
     if let Some(arr) = details.pointer("/arguments/jvm").and_then(|v| v.as_array()) {
         for item in arr {
@@ -183,10 +283,9 @@ pub fn launch_version(cfg: &LauncherConfig, version_id: &str, username: &str) ->
         jvm_args.push(classpath_str.clone());
     }
 
-    jvm_args.push(format!("-Xmx{}M", cfg.max_ram_mb));
+    // Per-instance RAM
+    jvm_args.push(format!("-Xmx{}M", instance.ram_mb.max(512)));
 
-    // Uses the runtime downloaded for exactly this version; falls back to
-    // a manual override or to `java` on PATH.
     let java_bin = java::resolve_java_binary(cfg, &details);
 
     let mut cmd = std::process::Command::new(&java_bin);
@@ -207,13 +306,9 @@ fn extract_natives_jar(jar_path: &PathBuf, dest_dir: &PathBuf) -> anyhow::Result
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let name = entry.name().to_string();
-        if name.starts_with("META-INF") {
+        if name.starts_with("META-INF") || name.ends_with('/') {
             continue;
         }
-        if name.ends_with('/') {
-            continue;
-        }
-        // Only extract native libs (dll/so/dylib) at the jar root
         if !(name.ends_with(".dll") || name.ends_with(".so") || name.ends_with(".dylib")) {
             continue;
         }

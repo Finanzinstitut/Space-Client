@@ -2,8 +2,12 @@
 
 mod launcher;
 
+use launcher::auth::{self, Account, AccountInfo, DeviceCodeInfo};
 use launcher::config::LauncherConfig;
+use launcher::instance::{self, Instance};
+use launcher::loader::{self, LoaderVersion};
 use launcher::manifest::{fetch_version_manifest, VersionEntry};
+use launcher::update::{self, UpdateInfo};
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::State;
@@ -18,6 +22,8 @@ struct VersionListResponse {
     latest_snapshot: String,
     versions: Vec<VersionEntry>,
 }
+
+// ---------------- settings ----------------
 
 #[tauri::command]
 async fn get_config(state: State<'_, AppState>) -> Result<LauncherConfig, String> {
@@ -35,18 +41,68 @@ async fn set_install_path(path: String, state: State<'_, AppState>) -> Result<La
 
 #[tauri::command]
 async fn set_settings(
-    username: String,
     max_ram_mb: u32,
     custom_java_path: String,
+    language: String,
+    check_updates: bool,
     state: State<'_, AppState>,
 ) -> Result<LauncherConfig, String> {
     let mut cfg = state.config.lock().unwrap();
-    cfg.default_username = username;
     cfg.max_ram_mb = max_ram_mb;
     cfg.custom_java_path = custom_java_path;
+    cfg.language = language;
+    cfg.check_updates = check_updates;
     cfg.save().map_err(|e| e.to_string())?;
     Ok(cfg.clone())
 }
+
+// ---------------- updates ----------------
+
+#[tauri::command]
+async fn check_update(state: State<'_, AppState>) -> Result<UpdateInfo, String> {
+    let enabled = state.config.lock().unwrap().check_updates;
+    if !enabled {
+        return Ok(UpdateInfo {
+            update_available: false,
+            current_version: update::CURRENT_VERSION.to_string(),
+            latest_version: update::CURRENT_VERSION.to_string(),
+            release_url: String::new(),
+            notes: String::new(),
+        });
+    }
+    Ok(update::check_for_update().await)
+}
+
+// ---------------- accounts ----------------
+
+#[tauri::command]
+async fn get_account() -> Result<Option<AccountInfo>, String> {
+    Ok(Account::load().map(|a| AccountInfo {
+        username: a.username,
+        uuid: a.uuid,
+    }))
+}
+
+#[tauri::command]
+async fn start_login() -> Result<DeviceCodeInfo, String> {
+    auth::start_device_login().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn complete_login(info: DeviceCodeInfo) -> Result<AccountInfo, String> {
+    let account = auth::poll_device_login(info).await.map_err(|e| e.to_string())?;
+    Ok(AccountInfo {
+        username: account.username,
+        uuid: account.uuid,
+    })
+}
+
+#[tauri::command]
+async fn logout() -> Result<(), String> {
+    Account::clear().map_err(|e| e.to_string())
+}
+
+// ---------------- versions & loaders ----------------
 
 #[tauri::command]
 async fn list_versions() -> Result<VersionListResponse, String> {
@@ -59,24 +115,107 @@ async fn list_versions() -> Result<VersionListResponse, String> {
 }
 
 #[tauri::command]
-async fn is_installed(version_id: String, state: State<'_, AppState>) -> Result<bool, String> {
-    let cfg = state.config.lock().unwrap().clone();
-    Ok(launcher::download::is_version_installed(&cfg, &version_id))
-}
-
-#[tauri::command]
-async fn install_version(app: tauri::AppHandle, version_id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let cfg = state.config.lock().unwrap().clone();
-    launcher::download::install_version(app, cfg, version_id)
+async fn list_loaders(loader_name: String, mc_version: String) -> Result<Vec<LoaderVersion>, String> {
+    loader::list_loader_versions(&loader_name, &mc_version)
         .await
         .map_err(|e| e.to_string())
 }
 
+// ---------------- instances ----------------
+
 #[tauri::command]
-async fn launch_version(version_id: String, username: String, state: State<'_, AppState>) -> Result<(), String> {
+async fn list_instances() -> Result<Vec<Instance>, String> {
+    Ok(instance::load_all())
+}
+
+#[tauri::command]
+async fn create_instance(
+    name: String,
+    mc_version: String,
+    loader_name: String,
+    ram_mb: u32,
+    parent_path: String,
+    state: State<'_, AppState>,
+) -> Result<Instance, String> {
     let cfg = state.config.lock().unwrap().clone();
-    let name = if username.trim().is_empty() { cfg.default_username.clone() } else { username };
-    launcher::launch::launch_version(&cfg, &version_id, &name).map_err(|e| e.to_string())
+    instance::create(&cfg, name, mc_version, loader_name, ram_mb, parent_path)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_instance(id: String, delete_files: bool) -> Result<(), String> {
+    instance::delete(&id, delete_files).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn open_instance_folder(id: String) -> Result<String, String> {
+    let inst = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
+    Ok(inst.game_dir().to_string_lossy().to_string())
+}
+
+/// Downloads everything this instance needs: vanilla version, Java runtime,
+/// and - if selected - the mod loader.
+#[tauri::command]
+async fn install_instance(
+    app: tauri::AppHandle,
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Instance, String> {
+    let cfg = state.config.lock().unwrap().clone();
+    let mut inst = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
+
+    // 1. vanilla base (client jar, libraries, assets, java)
+    launcher::download::install_version(app.clone(), cfg.clone(), inst.mc_version.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 2. mod loader on top
+    if inst.loader != "vanilla" {
+        let loaders = loader::list_loader_versions(&inst.loader, &inst.mc_version)
+            .await
+            .map_err(|e| e.to_string())?;
+        let chosen = loaders
+            .iter()
+            .find(|l| l.stable)
+            .or_else(|| loaders.first())
+            .ok_or_else(|| {
+                format!(
+                    "No {} version available for Minecraft {}",
+                    inst.loader, inst.mc_version
+                )
+            })?;
+
+        let version_id = loader::install_loader(
+            &app,
+            &cfg,
+            &inst.loader,
+            &inst.mc_version,
+            &chosen.version,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        inst.loader_version = chosen.version.clone();
+        inst.version_id = version_id;
+    } else {
+        inst.version_id = inst.mc_version.clone();
+    }
+
+    instance::upsert(inst.clone()).map_err(|e| e.to_string())?;
+    Ok(inst)
+}
+
+#[tauri::command]
+async fn launch_instance(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    // Signing in is mandatory - no offline fallback.
+    let account = auth::current_account()
+        .await
+        .map_err(|e| format!("Please sign in with Microsoft first. ({})", e))?;
+
+    let cfg = state.config.lock().unwrap().clone();
+    let inst = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
+
+    launcher::launch::launch_instance(&cfg, &inst, &account).map_err(|e| e.to_string())
 }
 
 fn main() {
@@ -87,15 +226,26 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_fs::init())
-        .manage(AppState { config: Mutex::new(config) })
+        .manage(AppState {
+            config: Mutex::new(config),
+        })
         .invoke_handler(tauri::generate_handler![
             get_config,
             set_install_path,
             set_settings,
+            check_update,
+            get_account,
+            start_login,
+            complete_login,
+            logout,
             list_versions,
-            is_installed,
-            install_version,
-            launch_version,
+            list_loaders,
+            list_instances,
+            create_instance,
+            delete_instance,
+            open_instance_folder,
+            install_instance,
+            launch_instance,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Space Client");

@@ -1,0 +1,169 @@
+use crate::launcher::config::{config_dir, LauncherConfig};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+
+fn registry_file() -> PathBuf {
+    config_dir().join("instances.json")
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Instance {
+    pub id: String,
+    pub name: String,
+    /// Absolute path to this instance's own folder. Fully user-chosen, so
+    /// instances can live on completely different drives from each other.
+    pub path: String,
+    pub mc_version: String,
+    /// "vanilla" | "fabric" | "quilt"
+    pub loader: String,
+    /// Empty for vanilla. Set once the loader has been installed.
+    #[serde(default)]
+    pub loader_version: String,
+    /// The version id actually launched. For vanilla this equals mc_version,
+    /// for Fabric it looks like "fabric-loader-0.16.9-1.21.1".
+    #[serde(default)]
+    pub version_id: String,
+    pub ram_mb: u32,
+    #[serde(default)]
+    pub created: String,
+}
+
+impl Instance {
+    pub fn dir(&self) -> PathBuf {
+        PathBuf::from(&self.path)
+    }
+    /// Game directory - saves, options.txt, resourcepacks, mods.
+    pub fn game_dir(&self) -> PathBuf {
+        self.dir().join(".minecraft")
+    }
+    pub fn mods_dir(&self) -> PathBuf {
+        self.game_dir().join("mods")
+    }
+}
+
+pub fn load_all() -> Vec<Instance> {
+    if let Ok(data) = fs::read_to_string(registry_file()) {
+        if let Ok(list) = serde_json::from_str::<Vec<Instance>>(&data) {
+            return list;
+        }
+    }
+    Vec::new()
+}
+
+pub fn save_all(list: &[Instance]) -> anyhow::Result<()> {
+    fs::write(registry_file(), serde_json::to_string_pretty(list)?)?;
+    Ok(())
+}
+
+pub fn get(id: &str) -> Option<Instance> {
+    load_all().into_iter().find(|i| i.id == id)
+}
+
+pub fn upsert(instance: Instance) -> anyhow::Result<()> {
+    let mut list = load_all();
+    match list.iter_mut().find(|i| i.id == instance.id) {
+        Some(existing) => *existing = instance,
+        None => list.push(instance),
+    }
+    save_all(&list)
+}
+
+/// Turns "My Fabric Pack!" into "my-fabric-pack" for use as a folder name.
+fn slugify(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = s.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "instance".to_string()
+    } else {
+        trimmed
+    }
+}
+
+/// Creates a new instance. `parent_path` is where the instance folder is
+/// created - empty means "use the default instances folder".
+pub fn create(
+    cfg: &LauncherConfig,
+    name: String,
+    mc_version: String,
+    loader: String,
+    ram_mb: u32,
+    parent_path: String,
+) -> anyhow::Result<Instance> {
+    if name.trim().is_empty() {
+        anyhow::bail!("Please enter a name for the instance.");
+    }
+
+    let parent = if parent_path.trim().is_empty() {
+        cfg.default_instances_dir()
+    } else {
+        PathBuf::from(parent_path)
+    };
+
+    let slug = slugify(&name);
+    let mut dir = parent.join(&slug);
+    let mut counter = 2;
+    while dir.exists() {
+        dir = parent.join(format!("{}-{}", slug, counter));
+        counter += 1;
+    }
+
+    fs::create_dir_all(dir.join(".minecraft").join("mods"))?;
+
+    let instance = Instance {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        path: dir.to_string_lossy().to_string(),
+        mc_version: mc_version.clone(),
+        loader,
+        loader_version: String::new(),
+        version_id: mc_version,
+        ram_mb,
+        created: format!("{}", chrono_now()),
+    };
+
+    // A copy of the metadata lives inside the folder too, so an instance
+    // stays self-describing if it is moved to another machine.
+    fs::write(
+        dir.join("instance.json"),
+        serde_json::to_string_pretty(&instance)?,
+    )?;
+
+    upsert(instance.clone())?;
+    Ok(instance)
+}
+
+/// Removes the instance from the launcher. Optionally deletes its files too.
+pub fn delete(id: &str, delete_files: bool) -> anyhow::Result<()> {
+    let list = load_all();
+    let target = list.iter().find(|i| i.id == id).cloned();
+    let remaining: Vec<Instance> = list.into_iter().filter(|i| i.id != id).collect();
+    save_all(&remaining)?;
+
+    if delete_files {
+        if let Some(inst) = target {
+            let dir = inst.dir();
+            // Only delete if it really looks like one of our instance folders.
+            if dir.join("instance.json").exists() {
+                fs::remove_dir_all(dir).ok();
+            }
+        }
+    }
+    Ok(())
+}
+
+fn chrono_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
