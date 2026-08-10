@@ -3,19 +3,17 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-/// ===================================================================
-/// IMPORTANT - YOU MUST SET THIS BEFORE LOGIN WILL WORK
-/// ===================================================================
-/// Mojang requires every launcher to use its own Azure application.
-/// Register one for free at https://portal.azure.com:
-///   1. Azure Active Directory -> App registrations -> New registration
-///   2. Supported account types: "Personal Microsoft accounts only"
-///   3. No redirect URI needed for the device code flow
-///   4. Authentication -> "Allow public client flows" -> YES
-///   5. Copy the "Application (client) ID" and paste it below
+/// Azure application ID for Space Client.
 ///
-/// Without this, Microsoft will reject the login with "unauthorized_client".
-pub const AZURE_CLIENT_ID: &str = "PUT-YOUR-AZURE-CLIENT-ID-HERE";
+/// This identifies the launcher to Microsoft. It is not a secret - a client ID
+/// alone grants no access to anything, so it is fine to keep it in the source.
+/// (A client *secret* would be different - this flow does not use one.)
+///
+/// The matching Azure app must be configured as:
+///   - Supported account types: "Personal Microsoft accounts only"
+///   - Authentication -> "Allow public client flows" -> YES
+/// Without the second setting Microsoft rejects logins with "unauthorized_client".
+pub const AZURE_CLIENT_ID: &str = "74f6b1c6-c83b-425b-ae42-573992624ab2";
 
 const DEVICE_CODE_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode";
 const TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
@@ -97,7 +95,7 @@ fn http() -> anyhow::Result<reqwest::Client> {
 fn check_client_id() -> anyhow::Result<()> {
     if AZURE_CLIENT_ID.starts_with("PUT-YOUR") || AZURE_CLIENT_ID.trim().is_empty() {
         anyhow::bail!(
-            "No Azure client ID configured. Open src-tauri/src/launcher/auth.rs and set AZURE_CLIENT_ID - see the comment there for the 5 steps."
+            "No Azure client ID configured. Set AZURE_CLIENT_ID in src-tauri/src/launcher/auth.rs."
         );
     }
     Ok(())
