@@ -74,13 +74,61 @@ pub fn get(id: &str) -> Option<Instance> {
     load_all().into_iter().find(|i| i.id == id)
 }
 
+/// Rewrites the instance.json inside the instance folder so the folder stays
+/// self-describing even after edits.
+pub fn save_meta(instance: &Instance) -> anyhow::Result<()> {
+    let dir = instance.dir();
+    if dir.exists() {
+        fs::write(
+            dir.join("instance.json"),
+            serde_json::to_string_pretty(instance)?,
+        )?;
+    }
+    Ok(())
+}
+
+/// Applies user edits. Changing the loader version clears version_id, which
+/// marks the instance as needing a reinstall before it can be launched.
+pub fn update(
+    id: &str,
+    name: String,
+    ram_mb: u32,
+    loader_version: String,
+) -> anyhow::Result<(Instance, bool)> {
+    let mut list = load_all();
+    let inst = list
+        .iter_mut()
+        .find(|i| i.id == id)
+        .ok_or_else(|| anyhow::anyhow!("Instance not found"))?;
+
+    if name.trim().is_empty() {
+        anyhow::bail!("Please enter a name for the instance.");
+    }
+
+    let loader_changed = inst.loader != "vanilla" && loader_version != inst.loader_version;
+
+    inst.name = name.trim().to_string();
+    inst.ram_mb = ram_mb.max(512);
+    if loader_changed {
+        inst.loader_version = loader_version;
+        // Force a reinstall - the old profile no longer matches.
+        inst.version_id = String::new();
+    }
+
+    let updated = inst.clone();
+    save_all(&list)?;
+    save_meta(&updated)?;
+    Ok((updated, loader_changed))
+}
+
 pub fn upsert(instance: Instance) -> anyhow::Result<()> {
     let mut list = load_all();
     match list.iter_mut().find(|i| i.id == instance.id) {
-        Some(existing) => *existing = instance,
-        None => list.push(instance),
+        Some(existing) => *existing = instance.clone(),
+        None => list.push(instance.clone()),
     }
-    save_all(&list)
+    save_all(&list)?;
+    save_meta(&instance)
 }
 
 /// Turns "My Fabric Pack!" into "my-fabric-pack" for use as a folder name.
@@ -105,11 +153,13 @@ fn slugify(name: &str) -> String {
 
 /// Creates a new instance. `parent_path` is where the instance folder is
 /// created - empty means "use the default instances folder".
+#[allow(clippy::too_many_arguments)]
 pub fn create(
     cfg: &LauncherConfig,
     name: String,
     mc_version: String,
     loader: String,
+    loader_version: String,
     ram_mb: u32,
     parent_path: String,
 ) -> anyhow::Result<Instance> {
@@ -139,7 +189,7 @@ pub fn create(
         path: dir.to_string_lossy().to_string(),
         mc_version: mc_version.clone(),
         loader,
-        loader_version: String::new(),
+        loader_version,
         version_id: mc_version,
         ram_mb,
         created: format!("{}", chrono_now()),

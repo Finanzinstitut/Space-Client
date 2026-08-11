@@ -6,7 +6,8 @@ A custom Minecraft: Java Edition launcher with a space theme, built with **Tauri
 
 - **Microsoft account login** (device code flow), implemented end to end: Microsoft → Xbox Live → XSTS → Minecraft Services, with refresh tokens so you stay signed in. ⚠️ *Currently blocked pending Mojang API approval — see Status below.*
 - **Offline profile** as a fallback while approval is pending. Uses Mojang's own name-based UUID scheme, so worlds keep their player data if you later switch to a real account with the same name. Singleplayer and `online-mode=false` servers only.
-- **Independent instances.** Every instance is its own folder with its own mods, worlds, RAM allocation and — importantly — its own storage location. You can put one instance on `D:\`, another on an external drive.
+- **Independent instances.** Every instance is its own folder with its own mods, worlds, RAM allocation and — importantly — its own storage location. You can put one instance on `D:\`, another on an external drive. Instances can be renamed, re-sized and re-pointed at a different loader build after creation.
+- **Pick the exact loader build** when creating or editing an instance, or leave it on automatic to get the newest stable one.
 - **Every Minecraft version**, pulled live from Mojang's official version manifest (releases, snapshots, betas, alphas).
 - **Mod loaders**: Fabric, Quilt, Forge and NeoForge. Fabric and Quilt install from their meta profiles; Forge and NeoForge run their official installers headlessly, because their bytecode-patching processors cannot be reproduced from a profile alone.
 - **Modrinth browser** for **mods, resource packs and shaders**. Opens straight onto Modrinth's popular listing (no search term needed), filterable by the official category tags, and everything is restricted to the instance's Minecraft version and — for mods — its loader.

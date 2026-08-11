@@ -81,6 +81,12 @@ function renderInstances() {
 
     const actions = card.querySelector(".instance-actions");
 
+    const editBtn = document.createElement("button");
+    editBtn.className = "btn icon-btn small";
+    editBtn.textContent = "✏️";
+    editBtn.title = t("btn_edit");
+    editBtn.onclick = () => openEditModal(inst);
+
     const playBtn = document.createElement("button");
     playBtn.className = "btn primary small";
     playBtn.textContent = t("btn_play");
@@ -114,7 +120,16 @@ function renderInstances() {
       await invoke("delete_instance", { id: inst.id, deleteFiles: true });
       await refreshInstances();
     };
+    actions.appendChild(editBtn);
     actions.appendChild(delBtn);
+
+    // An empty version_id means the loader profile still has to be built.
+    if (!inst.version_id) {
+      const tag = document.createElement("span");
+      tag.className = "tag warn";
+      tag.textContent = t("needs_install");
+      card.querySelector(".instance-meta").appendChild(tag);
+    }
 
     list.appendChild(card);
   });
@@ -153,6 +168,122 @@ async function launchInstance(inst) {
   }
 }
 
+
+// ---------------- loader versions ----------------
+/// Fills a <select> with the loader builds available for a Minecraft version.
+/// The first entry always means "let the launcher pick the newest stable one".
+async function fillLoaderVersions(selectId, loader, mcVersion, preselect = "") {
+  const select = $(selectId);
+  select.innerHTML = "";
+
+  const auto = document.createElement("option");
+  auto.value = "";
+  auto.textContent = t("loader_auto");
+  select.appendChild(auto);
+
+  if (!loader || loader === "vanilla" || !mcVersion) return;
+
+  const loading = document.createElement("option");
+  loading.textContent = t("loader_loading");
+  loading.disabled = true;
+  select.appendChild(loading);
+  select.value = "";
+
+  try {
+    const versions = await invoke("list_loaders", {
+      loaderName: loader,
+      mcVersion: mcVersion,
+    });
+    select.innerHTML = "";
+    select.appendChild(auto);
+
+    if (versions.length === 0) {
+      const none = document.createElement("option");
+      none.textContent = t("loader_none");
+      none.disabled = true;
+      select.appendChild(none);
+      return;
+    }
+
+    versions.forEach((v) => {
+      const opt = document.createElement("option");
+      opt.value = v.version;
+      opt.textContent = v.stable ? v.version : `${v.version} (beta)`;
+      select.appendChild(opt);
+    });
+
+    if (preselect && versions.some((v) => v.version === preselect)) {
+      select.value = preselect;
+    }
+  } catch (e) {
+    select.innerHTML = "";
+    select.appendChild(auto);
+    const err = document.createElement("option");
+    err.textContent = t("loader_none");
+    err.disabled = true;
+    select.appendChild(err);
+  }
+}
+
+function toggleLoaderVersionField(fieldId, loader) {
+  $(fieldId).classList.toggle("hidden", !loader || loader === "vanilla");
+}
+
+// ---------------- edit instance ----------------
+let editingInstance = null;
+
+async function openEditModal(inst) {
+  editingInstance = inst;
+  $("edit-name").value = inst.name;
+  $("edit-mc").value = `${inst.mc_version} — ${inst.loader}`;
+  $("edit-ram").value = inst.ram_mb;
+  $("edit-ram-value").textContent = inst.ram_mb + " MB";
+  setStatus("edit-status", "");
+
+  toggleLoaderVersionField("edit-loader-version-field", inst.loader);
+  $("edit-backdrop").classList.remove("hidden");
+
+  await fillLoaderVersions(
+    "edit-loader-version",
+    inst.loader,
+    inst.mc_version,
+    inst.loader_version
+  );
+}
+
+$("edit-ram").addEventListener("input", (e) => {
+  $("edit-ram-value").textContent = e.target.value + " MB";
+});
+
+$("btn-cancel-edit").addEventListener("click", () => {
+  $("edit-backdrop").classList.add("hidden");
+  editingInstance = null;
+});
+
+$("btn-confirm-edit").addEventListener("click", async () => {
+  if (!editingInstance) return;
+  try {
+    const result = await invoke("update_instance", {
+      id: editingInstance.id,
+      name: $("edit-name").value.trim(),
+      ramMb: parseInt($("edit-ram").value, 10),
+      loaderVersion: $("edit-loader-version").value,
+    });
+
+    $("edit-backdrop").classList.add("hidden");
+    await refreshInstances();
+    setStatus("global-status", t("edit_saved"), "success");
+
+    // A new loader version means the profile has to be rebuilt.
+    if (result.needs_reinstall) {
+      await installInstance(result.instance);
+    }
+    editingInstance = null;
+  } catch (e) {
+    setStatus("edit-status", String(e), "error");
+  }
+});
+
 // ---------------- create instance modal ----------------
 function renderVersionOptions() {
   const showAll = $("new-snapshots").checked;
@@ -177,6 +308,15 @@ function renderVersionOptions() {
 
 $("new-snapshots").addEventListener("change", renderVersionOptions);
 
+async function refreshNewLoaderVersions() {
+  const loader = $("new-loader").value;
+  toggleLoaderVersionField("new-loader-version-field", loader);
+  await fillLoaderVersions("new-loader-version", loader, $("new-version").value);
+}
+
+$("new-loader").addEventListener("change", refreshNewLoaderVersions);
+$("new-version").addEventListener("change", refreshNewLoaderVersions);
+
 $("btn-new-instance").addEventListener("click", () => {
   $("new-name").value = "";
   $("new-path").value = "";
@@ -184,6 +324,7 @@ $("btn-new-instance").addEventListener("click", () => {
   $("new-ram-value").textContent = $("new-ram").value + " MB";
   setStatus("create-status", "");
   $("modal-backdrop").classList.remove("hidden");
+  refreshNewLoaderVersions();
 });
 
 $("btn-cancel-create").addEventListener("click", () => {
@@ -210,6 +351,7 @@ $("btn-confirm-create").addEventListener("click", async () => {
       name,
       mcVersion: $("new-version").value,
       loaderName: $("new-loader").value,
+      loaderVersion: $("new-loader-version").value,
       ramMb: parseInt($("new-ram").value, 10),
       parentPath: $("new-path").value,
     });

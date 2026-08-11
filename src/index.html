@@ -230,6 +230,11 @@
         </select>
       </div>
 
+      <div class="field grow" id="new-loader-version-field">
+        <label data-i18n="field_loader_version"></label>
+        <select id="new-loader-version"></select>
+      </div>
+
       <div class="field grow">
         <label data-i18n="field_ram"></label>
         <input id="new-ram" type="range" min="1024" max="16384" step="512" />
@@ -250,6 +255,42 @@
         <button id="btn-confirm-create" class="btn primary" data-i18n="btn_create"></button>
       </div>
       <div id="create-status" class="status-line"></div>
+    </div>
+  </div>
+
+  <!-- EDIT INSTANCE MODAL -->
+  <div id="edit-backdrop" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2 data-i18n="edit_title"></h2>
+
+      <div class="field grow">
+        <label data-i18n="field_name"></label>
+        <input id="edit-name" type="text" />
+      </div>
+
+      <div class="field grow">
+        <label data-i18n="field_version"></label>
+        <input id="edit-mc" type="text" readonly />
+        <p class="hint" data-i18n="field_fixed"></p>
+      </div>
+
+      <div class="field grow" id="edit-loader-version-field">
+        <label data-i18n="field_loader_version"></label>
+        <select id="edit-loader-version"></select>
+        <p class="hint" data-i18n="edit_reinstall_note"></p>
+      </div>
+
+      <div class="field grow">
+        <label data-i18n="field_ram"></label>
+        <input id="edit-ram" type="range" min="1024" max="16384" step="512" />
+        <span id="edit-ram-value"></span>
+      </div>
+
+      <div class="row actions">
+        <button id="btn-cancel-edit" class="btn secondary" data-i18n="btn_cancel"></button>
+        <button id="btn-confirm-edit" class="btn primary" data-i18n="btn_save"></button>
+      </div>
+      <div id="edit-status" class="status-line"></div>
     </div>
   </div>
 

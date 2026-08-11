@@ -146,13 +146,41 @@ async fn create_instance(
     name: String,
     mc_version: String,
     loader_name: String,
+    loader_version: String,
     ram_mb: u32,
     parent_path: String,
     state: State<'_, AppState>,
 ) -> Result<Instance, String> {
     let cfg = state.config.lock().unwrap().clone();
-    instance::create(&cfg, name, mc_version, loader_name, ram_mb, parent_path)
-        .map_err(|e| e.to_string())
+    instance::create(
+        &cfg,
+        name,
+        mc_version,
+        loader_name,
+        loader_version,
+        ram_mb,
+        parent_path,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+struct InstanceUpdateResult {
+    instance: Instance,
+    /// True when the loader version changed, so the UI knows a reinstall is due.
+    needs_reinstall: bool,
+}
+
+#[tauri::command]
+async fn update_instance(
+    id: String,
+    name: String,
+    ram_mb: u32,
+    loader_version: String,
+) -> Result<InstanceUpdateResult, String> {
+    let (instance, needs_reinstall) =
+        instance::update(&id, name, ram_mb, loader_version).map_err(|e| e.to_string())?;
+    Ok(InstanceUpdateResult { instance, needs_reinstall })
 }
 
 #[tauri::command]
@@ -203,16 +231,29 @@ async fn install_instance(
         let loaders = loader::list_versions_for(&inst.loader, &inst.mc_version)
             .await
             .map_err(|e| e.to_string())?;
-        let chosen = loaders
-            .iter()
-            .find(|l| l.stable)
-            .or_else(|| loaders.first())
-            .ok_or_else(|| {
-                format!(
-                    "No {} version available for Minecraft {}",
-                    inst.loader, inst.mc_version
-                )
-            })?;
+        // A version the user pinned wins; otherwise take the newest stable one.
+        let chosen = if !inst.loader_version.is_empty() {
+            loaders
+                .iter()
+                .find(|l| l.version == inst.loader_version)
+                .cloned()
+                .unwrap_or(loader::LoaderVersion {
+                    version: inst.loader_version.clone(),
+                    stable: true,
+                })
+        } else {
+            loaders
+                .iter()
+                .find(|l| l.stable)
+                .or_else(|| loaders.first())
+                .cloned()
+                .ok_or_else(|| {
+                    format!(
+                        "No {} version available for Minecraft {}",
+                        inst.loader, inst.mc_version
+                    )
+                })?
+        };
 
         let version_id = match inst.loader.as_str() {
             "fabric" | "quilt" => loader::install_loader(
@@ -380,6 +421,7 @@ fn main() {
             list_loaders,
             list_instances,
             create_instance,
+            update_instance,
             delete_instance,
             open_instance_folder,
             install_instance,

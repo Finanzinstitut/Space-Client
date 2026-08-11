@@ -485,3 +485,6 @@ input.grow { flex: 1; }
 
 .version-list::-webkit-scrollbar { width: 8px; }
 .version-list::-webkit-scrollbar-thumb { background: #ffffff18; border-radius: 4px; }
+
+.tag.warn { background: #3a2a10; border-color: #7a5a20; color: #ffd9a0; }
+.field.hidden { display: none; }
