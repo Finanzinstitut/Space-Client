@@ -6,5 +6,6 @@ pub mod java;
 pub mod launch;
 pub mod loader;
 pub mod manifest;
+pub mod mods;
 pub mod progress;
 pub mod update;

@@ -18,6 +18,7 @@
       </div>
       <nav>
         <button class="nav-item active" data-view="instances">🚀 <span data-i18n="nav_instances"></span></button>
+        <button class="nav-item" data-view="mods">🛰️ <span data-i18n="nav_mods"></span></button>
         <button class="nav-item" data-view="account">👤 <span data-i18n="nav_account"></span></button>
         <button class="nav-item" data-view="settings">⚙️ <span data-i18n="nav_settings"></span></button>
       </nav>
@@ -43,6 +44,46 @@
         <div id="progress-wrap" class="progress-wrap hidden">
           <div class="progress-label" id="progress-label"></div>
           <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        </div>
+      </section>
+
+      <!-- MODS -->
+      <section id="view-mods" class="view">
+        <h1 data-i18n="mods_title"></h1>
+        <p class="subtitle" data-i18n="mods_sub"></p>
+
+        <div class="card wide">
+          <div class="field grow">
+            <label data-i18n="mods_pick_instance"></label>
+            <select id="mods-instance"></select>
+          </div>
+
+          <div id="mods-warning" class="warning-box hidden"></div>
+
+          <div id="mods-panel">
+            <div class="tab-row">
+              <button class="tab active" data-tab="browse" data-i18n="mods_browse"></button>
+              <button class="tab" data-tab="installed" data-i18n="mods_installed"></button>
+            </div>
+
+            <div id="tab-browse" class="tab-panel active">
+              <div class="row">
+                <input id="mods-query" type="text" data-i18n-ph="mods_search_ph" class="grow" />
+                <button id="btn-mods-search" class="btn primary small" data-i18n="btn_search"></button>
+              </div>
+              <div id="mods-results" class="mod-list"></div>
+            </div>
+
+            <div id="tab-installed" class="tab-panel">
+              <div class="row">
+                <button id="btn-check-mod-updates" class="btn secondary small" data-i18n="btn_check_updates"></button>
+                <button id="btn-update-all-mods" class="btn primary small hidden" data-i18n="btn_update_all"></button>
+              </div>
+              <div id="mods-installed-list" class="mod-list"></div>
+            </div>
+          </div>
+
+          <div id="mods-status" class="status-line"></div>
         </div>
       </section>
 

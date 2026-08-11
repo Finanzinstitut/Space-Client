@@ -123,6 +123,7 @@ function renderInstances() {
 async function refreshInstances() {
   instances = await invoke("list_instances");
   renderInstances();
+  renderModsInstanceOptions();
 }
 
 async function installInstance(inst) {
@@ -278,6 +279,278 @@ $("btn-signout").addEventListener("click", async () => {
   renderAccount();
 });
 
+
+// ---------------- mods (Modrinth) ----------------
+let modsInstance = null;
+let installedCache = [];
+let availableUpdates = [];
+
+function currentModsInstance() {
+  const id = $("mods-instance").value;
+  return instances.find((i) => i.id === id) || null;
+}
+
+function renderModsInstanceOptions() {
+  const select = $("mods-instance");
+  const previous = select.value;
+  select.innerHTML = "";
+  instances.forEach((inst) => {
+    const opt = document.createElement("option");
+    opt.value = inst.id;
+    opt.textContent = `${inst.name} — ${inst.mc_version} (${inst.loader})`;
+    select.appendChild(opt);
+  });
+  if (previous && instances.some((i) => i.id === previous)) select.value = previous;
+  updateModsPanel();
+}
+
+function updateModsPanel() {
+  const inst = currentModsInstance();
+  const warning = $("mods-warning");
+  const panel = $("mods-panel");
+
+  if (!inst) {
+    warning.textContent = t("mods_no_instance");
+    warning.classList.remove("hidden");
+    panel.classList.add("hidden");
+    return;
+  }
+  if (inst.loader === "vanilla") {
+    warning.textContent = t("mods_vanilla_warning");
+    warning.classList.remove("hidden");
+    panel.classList.add("hidden");
+    return;
+  }
+  warning.classList.add("hidden");
+  panel.classList.remove("hidden");
+  loadInstalledMods();
+}
+
+$("mods-instance").addEventListener("change", () => {
+  $("mods-results").innerHTML = "";
+  availableUpdates = [];
+  $("btn-update-all-mods").classList.add("hidden");
+  updateModsPanel();
+});
+
+document.querySelectorAll(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach((x) => x.classList.remove("active"));
+    tab.classList.add("active");
+    $("tab-" + tab.dataset.tab).classList.add("active");
+    if (tab.dataset.tab === "installed") loadInstalledMods();
+  });
+});
+
+function modCard(data, actionBtn) {
+  const card = document.createElement("div");
+  card.className = "mod-card";
+  card.innerHTML = `
+    <img class="mod-icon" alt="" />
+    <div class="mod-body">
+      <div class="mod-title"></div>
+      <div class="mod-desc"></div>
+      <div class="mod-meta"></div>
+    </div>
+  `;
+  const icon = card.querySelector(".mod-icon");
+  if (data.icon_url) icon.src = data.icon_url;
+  else icon.classList.add("placeholder");
+  card.querySelector(".mod-title").textContent = data.title;
+  card.querySelector(".mod-desc").textContent = data.description || "";
+  card.querySelector(".mod-meta").textContent = data.meta || "";
+  card.appendChild(actionBtn);
+  return card;
+}
+
+async function searchMods() {
+  const inst = currentModsInstance();
+  if (!inst) return;
+  const query = $("mods-query").value.trim();
+  const list = $("mods-results");
+  list.innerHTML = "";
+  setStatus("mods-status", "");
+
+  try {
+    const hits = await invoke("search_mods", {
+      query,
+      instanceId: inst.id,
+      offset: 0,
+    });
+
+    if (hits.length === 0) {
+      const p = document.createElement("p");
+      p.className = "empty-note";
+      p.textContent = t("mods_no_results");
+      list.appendChild(p);
+      return;
+    }
+
+    hits.forEach((hit) => {
+      const already = installedCache.some((m) => m.project_id === hit.project_id);
+      const btn = document.createElement("button");
+      btn.className = already ? "btn secondary small" : "btn primary small";
+      btn.textContent = already ? t("btn_added") : t("btn_add");
+      btn.disabled = already;
+      btn.onclick = () => addMod(hit, btn);
+
+      list.appendChild(
+        modCard(
+          {
+            title: hit.title,
+            description: hit.description,
+            icon_url: hit.icon_url,
+            meta: `${hit.author} · ${hit.downloads.toLocaleString()} ${t("downloads")}`,
+          },
+          btn
+        )
+      );
+    });
+  } catch (e) {
+    setStatus("mods-status", String(e), "error");
+  }
+}
+
+$("btn-mods-search").addEventListener("click", searchMods);
+$("mods-query").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") searchMods();
+});
+
+async function addMod(hit, btn) {
+  const inst = currentModsInstance();
+  if (!inst) return;
+  btn.disabled = true;
+  setStatus("mods-status", t("mods_installing", { name: hit.title }));
+  try {
+    const added = await invoke("install_mod", {
+      instanceId: inst.id,
+      projectId: hit.project_id,
+    });
+    btn.textContent = t("btn_added");
+    btn.className = "btn secondary small";
+    setStatus("mods-status", t("mods_installed_msg", { count: added.length }), "success");
+    await loadInstalledMods();
+  } catch (e) {
+    btn.disabled = false;
+    setStatus("mods-status", String(e), "error");
+  }
+}
+
+async function loadInstalledMods() {
+  const inst = currentModsInstance();
+  if (!inst) return;
+  const list = $("mods-installed-list");
+  try {
+    installedCache = await invoke("list_installed_mods", { instanceId: inst.id });
+    list.innerHTML = "";
+
+    if (installedCache.length === 0) {
+      const p = document.createElement("p");
+      p.className = "empty-note";
+      p.textContent = t("mods_none_installed");
+      list.appendChild(p);
+      return;
+    }
+
+    installedCache.forEach((m) => {
+      const pending = availableUpdates.find((u) => u.project_id === m.project_id);
+
+      const actions = document.createElement("div");
+      actions.className = "mod-actions";
+
+      if (pending) {
+        const upd = document.createElement("button");
+        upd.className = "btn primary small";
+        upd.textContent = t("btn_update");
+        upd.onclick = () => updateOne(pending, upd);
+        actions.appendChild(upd);
+      }
+
+      const btn = document.createElement("button");
+      btn.className = "btn danger small";
+      btn.textContent = t("btn_remove");
+      btn.onclick = async () => {
+        await invoke("remove_mod", { instanceId: inst.id, filename: m.filename });
+        availableUpdates = availableUpdates.filter((u) => u.project_id !== m.project_id);
+        await loadInstalledMods();
+      };
+      actions.appendChild(btn);
+
+      const meta = pending
+        ? t("update_arrow", { old: m.version_number, new: pending.new_version })
+        : m.version_number === "manual"
+        ? t("mods_manual")
+        : m.version_number;
+
+      const card = modCard(
+        { title: m.title, description: m.filename, icon_url: "", meta },
+        actions
+      );
+      if (pending) card.classList.add("has-update");
+      list.appendChild(card);
+    });
+  } catch (e) {
+    setStatus("mods-status", String(e), "error");
+  }
+}
+
+
+async function checkModUpdates() {
+  const inst = currentModsInstance();
+  if (!inst) return;
+  setStatus("mods-status", t("mods_checking"));
+  try {
+    availableUpdates = await invoke("check_mod_updates", { instanceId: inst.id });
+    if (availableUpdates.length === 0) {
+      setStatus("mods-status", t("mods_no_updates"), "success");
+      $("btn-update-all-mods").classList.add("hidden");
+    } else {
+      setStatus("mods-status", t("mods_updates_found", { count: availableUpdates.length }));
+      $("btn-update-all-mods").classList.remove("hidden");
+    }
+    await loadInstalledMods();
+  } catch (e) {
+    setStatus("mods-status", String(e), "error");
+  }
+}
+
+async function updateOne(pending, btn) {
+  const inst = currentModsInstance();
+  if (!inst) return;
+  btn.disabled = true;
+  setStatus("mods-status", t("mods_updating", { name: pending.title }));
+  try {
+    await invoke("update_mod", { instanceId: inst.id, projectId: pending.project_id });
+    availableUpdates = availableUpdates.filter((u) => u.project_id !== pending.project_id);
+    if (availableUpdates.length === 0) $("btn-update-all-mods").classList.add("hidden");
+    setStatus("mods-status", t("mods_updated", { count: 1 }), "success");
+    await loadInstalledMods();
+  } catch (e) {
+    btn.disabled = false;
+    setStatus("mods-status", String(e), "error");
+  }
+}
+
+$("btn-check-mod-updates").addEventListener("click", checkModUpdates);
+
+$("btn-update-all-mods").addEventListener("click", async () => {
+  const inst = currentModsInstance();
+  if (!inst) return;
+  $("btn-update-all-mods").disabled = true;
+  try {
+    const count = await invoke("update_all_mods", { instanceId: inst.id });
+    availableUpdates = [];
+    $("btn-update-all-mods").classList.add("hidden");
+    setStatus("mods-status", t("mods_updated", { count }), "success");
+    await loadInstalledMods();
+  } catch (e) {
+    setStatus("mods-status", String(e), "error");
+  } finally {
+    $("btn-update-all-mods").disabled = false;
+  }
+});
+
 // ---------------- settings ----------------
 $("btn-pick-path").addEventListener("click", async () => {
   const selected = await open({ directory: true, multiple: false });
@@ -302,6 +575,7 @@ $("btn-save-settings").addEventListener("click", async () => {
     applyTranslations();
     renderInstances();
     renderAccount();
+    renderModsInstanceOptions();
     setStatus("settings-status", t("saved"), "success");
   } catch (e) {
     setStatus("settings-status", String(e), "error");

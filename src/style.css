@@ -328,3 +328,61 @@ input[type="range"] { accent-color: var(--accent); }
 .update-banner.hidden { display: none; }
 .update-banner strong { display: block; margin-bottom: 4px; }
 #update-text { font-size: 13px; color: var(--text-dim); }
+
+/* ---------- mods browser ---------- */
+.card.wide { max-width: 860px; }
+
+.warning-box {
+  background: #3a2a10; border: 1px solid #7a5a20; color: #ffd9a0;
+  padding: 12px 16px; border-radius: 10px; font-size: 13px; margin: 12px 0;
+}
+.warning-box.hidden { display: none; }
+
+.tab-row { display: flex; gap: 4px; margin: 18px 0 16px; border-bottom: 1px solid var(--border); }
+.tab {
+  all: unset; cursor: pointer; padding: 10px 18px; font-size: 14px;
+  color: var(--text-dim); border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent-2); }
+
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+input.grow { flex: 1; }
+
+.mod-list { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; max-height: 52vh; overflow-y: auto; padding-right: 4px; }
+
+.mod-card {
+  display: flex; align-items: center; gap: 14px;
+  background: #ffffff08; border: 1px solid var(--border);
+  border-radius: 12px; padding: 12px 14px;
+  transition: border-color .15s;
+}
+.mod-card:hover { border-color: var(--accent); }
+
+.mod-icon {
+  width: 44px; height: 44px; border-radius: 8px; flex-shrink: 0;
+  object-fit: cover; background: #100d2a; image-rendering: pixelated;
+}
+.mod-icon.placeholder {
+  background: radial-gradient(circle at 35% 30%, var(--accent-2), var(--accent) 70%);
+  opacity: .5;
+}
+.mod-body { flex: 1; min-width: 0; }
+.mod-title { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+.mod-desc {
+  font-size: 12px; color: var(--text-dim); margin-bottom: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mod-meta { font-size: 11px; color: var(--text-dim); opacity: .7; }
+
+.mod-list::-webkit-scrollbar { width: 8px; }
+.mod-list::-webkit-scrollbar-track { background: #ffffff05; border-radius: 4px; }
+.mod-list::-webkit-scrollbar-thumb { background: #ffffff18; border-radius: 4px; }
+.mod-list::-webkit-scrollbar-thumb:hover { background: #ffffff28; }
+
+.mod-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.mod-card.has-update { border-color: var(--accent-2); box-shadow: 0 0 14px #38e0ff22; }
+.mod-card.has-update .mod-meta { color: var(--accent-2); opacity: 1; }
+.btn.hidden { display: none; }

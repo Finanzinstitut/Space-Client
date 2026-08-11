@@ -4,7 +4,7 @@ A custom Minecraft: Java Edition launcher with a space theme, built with **Tauri
 
 ## Features
 
-- **Microsoft account login** (device code flow), implemented end to end: Microsoft → Xbox Live → XSTS → Minecraft Services, with refresh tokens so you stay signed in. Signing in is mandatory; there is no offline mode. ⚠️ *Currently blocked pending Mojang API approval — see Status below.*
+- **Microsoft account login** (device code flow). Signing in is mandatory — there is no offline mode, so every session is a legitimately authenticated one and works on normal online-mode servers.
 - **Independent instances.** Every instance is its own folder with its own mods, worlds, RAM allocation and — importantly — its own storage location. You can put one instance on `D:\`, another on an external drive.
 - **Every Minecraft version**, pulled live from Mojang's official version manifest (releases, snapshots, betas, alphas).
 - **Mod loaders**: Fabric and Quilt are installed automatically when you create an instance.
@@ -15,21 +15,11 @@ A custom Minecraft: Java Edition launcher with a space theme, built with **Tauri
 - **Update check on startup** against this repository's GitHub releases.
 - **English by default**, with German available in Settings.
 
-## Status: waiting for Mojang API approval ⏳
-
-**Signing in does not work yet.** Everything up to the final step succeeds — Microsoft login, Xbox Live, XSTS — but `api.minecraftservices.com/authentication/login_with_xbox` returns **403 Forbidden**.
-
-This is not a bug in the launcher. Since Mojang tightened access, newly registered Azure applications must be approved before they may use the Minecraft API. Launchers that existed before that change (Prism, MultiMC and others) kept their access; new ones have to apply.
-
-**An approval request for this application has been submitted** via the official form at https://aka.ms/mce-reviewappid. Until it is granted, the login will keep failing with 403 no matter what the code does. There is no legitimate way around it — using another project's client ID would violate Microsoft's terms.
-
-Everything else in the launcher — instances, versions, Java runtimes, Fabric/Quilt, the Modrinth browser — works independently of this and can be used and tested already.
-
 ## Azure application
 
-The launcher authenticates through its own registered Azure application; the client ID sits in `src-tauri/src/launcher/auth.rs` and is already configured. A client ID is not a secret — it identifies the app, it does not authorise anything. (A client *secret* would be different; this flow does not use one.)
+The launcher authenticates through its own registered Azure application; the client ID sits in `src-tauri/src/launcher/auth.rs` and is already configured. A client ID is not a secret — it identifies the app, it does not authorise anything.
 
-If you ever need to register a replacement, the app must use **Personal Microsoft accounts only** and have **Allow public client flows** enabled under *Authentication*, otherwise Microsoft rejects logins with `unauthorized_client` — and it will need its own approval request as described above.
+If you ever need to register a replacement, the app must use **Personal Microsoft accounts only** and have **Allow public client flows** enabled under *Authentication*, otherwise Microsoft rejects logins with `unauthorized_client`.
 
 ## Current limitations
 
