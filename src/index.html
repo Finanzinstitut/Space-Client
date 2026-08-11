@@ -67,10 +67,22 @@
             </div>
 
             <div id="tab-browse" class="tab-panel active">
+              <div class="type-row" id="type-row">
+                <button class="type-btn active" data-type="mod" data-i18n="type_mod"></button>
+                <button class="type-btn" data-type="resourcepack" data-i18n="type_resourcepack"></button>
+                <button class="type-btn" data-type="shader" data-i18n="type_shader"></button>
+              </div>
+
+              <p class="hint" id="type-note"></p>
+
               <div class="row">
                 <input id="mods-query" type="text" data-i18n-ph="mods_search_ph" class="grow" />
                 <button id="btn-mods-search" class="btn primary small" data-i18n="btn_search"></button>
               </div>
+
+              <div class="cat-label" data-i18n="categories_label"></div>
+              <div id="category-chips" class="chip-row"></div>
+
               <div id="mods-results" class="mod-list"></div>
             </div>
 
@@ -238,6 +250,18 @@
         <button id="btn-confirm-create" class="btn primary" data-i18n="btn_create"></button>
       </div>
       <div id="create-status" class="status-line"></div>
+    </div>
+  </div>
+
+  <!-- VERSION PICKER -->
+  <div id="version-backdrop" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2 data-i18n="versions_title"></h2>
+      <div id="version-project" class="version-project"></div>
+      <div id="version-list" class="version-list"></div>
+      <div class="row actions">
+        <button id="btn-close-versions" class="btn secondary" data-i18n="btn_cancel"></button>
+      </div>
     </div>
   </div>
 

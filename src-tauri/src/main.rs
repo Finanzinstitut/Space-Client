@@ -7,7 +7,7 @@ use launcher::config::LauncherConfig;
 use launcher::instance::{self, Instance};
 use launcher::loader::{self, LoaderVersion};
 use launcher::manifest::{fetch_version_manifest, VersionEntry};
-use launcher::mods::{self, InstalledMod, ModHit, ModUpdate};
+use launcher::mods::{self, InstalledMod, ModHit, ModUpdate, ProjectVersion};
 use launcher::update::{self, UpdateInfo};
 use serde::Serialize;
 use std::sync::Mutex;
@@ -264,10 +264,30 @@ async fn launch_instance(id: String, state: State<'_, AppState>) -> Result<(), S
 async fn search_mods(
     query: String,
     instance_id: String,
+    project_type: String,
+    categories: Vec<String>,
     offset: u32,
 ) -> Result<Vec<ModHit>, String> {
     let inst = instance::get(&instance_id).ok_or_else(|| "Instance not found".to_string())?;
-    mods::search(query, inst.mc_version, inst.loader, offset)
+    mods::search(
+        query,
+        inst.mc_version,
+        inst.loader,
+        project_type,
+        categories,
+        offset,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn list_project_versions(
+    project_id: String,
+    instance_id: String,
+    project_type: String,
+) -> Result<Vec<ProjectVersion>, String> {
+    mods::list_versions(project_id, instance_id, project_type)
         .await
         .map_err(|e| e.to_string())
 }
@@ -277,20 +297,41 @@ async fn install_mod(
     app: tauri::AppHandle,
     instance_id: String,
     project_id: String,
+    project_type: String,
 ) -> Result<Vec<InstalledMod>, String> {
-    mods::install_mod(&app, instance_id, project_id)
+    mods::install_mod(&app, instance_id, project_id, project_type)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn list_installed_mods(instance_id: String) -> Result<Vec<InstalledMod>, String> {
-    mods::list_installed(&instance_id).map_err(|e| e.to_string())
+async fn install_project_version(
+    app: tauri::AppHandle,
+    instance_id: String,
+    project_id: String,
+    version_id: String,
+    project_type: String,
+) -> Result<InstalledMod, String> {
+    mods::install_specific_version(&app, instance_id, project_id, version_id, project_type)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn remove_mod(instance_id: String, filename: String) -> Result<(), String> {
-    mods::remove_mod(&instance_id, &filename).map_err(|e| e.to_string())
+async fn list_installed_mods(
+    instance_id: String,
+    project_type: String,
+) -> Result<Vec<InstalledMod>, String> {
+    mods::list_installed(&instance_id, &project_type).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn remove_mod(
+    instance_id: String,
+    filename: String,
+    project_type: String,
+) -> Result<(), String> {
+    mods::remove_mod(&instance_id, &filename, &project_type).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -344,7 +385,9 @@ fn main() {
             install_instance,
             launch_instance,
             search_mods,
+            list_project_versions,
             install_mod,
+            install_project_version,
             list_installed_mods,
             remove_mod,
             check_mod_updates,

@@ -422,3 +422,66 @@ input.grow { flex: 1; }
   padding: 10px 12px; font-size: 15px; line-height: 1;
 }
 .btn.icon-btn:hover { background: #241f57; border-color: var(--accent); }
+
+/* ---------- content type switcher ---------- */
+.type-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.type-btn {
+  all: unset; cursor: pointer;
+  padding: 8px 16px; border-radius: 20px; font-size: 13px;
+  background: #ffffff08; border: 1px solid var(--border); color: var(--text-dim);
+  transition: all .15s;
+}
+.type-btn:hover { color: var(--text); border-color: var(--accent); }
+.type-btn.active {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  color: #0a0820; font-weight: 600; border-color: transparent;
+}
+
+/* ---------- category chips ---------- */
+.cat-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text-dim); margin: 16px 0 8px;
+}
+.chip-row {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  max-height: 92px; overflow-y: auto; padding-right: 4px;
+}
+.chip {
+  all: unset; cursor: pointer;
+  font-size: 11px; padding: 4px 11px; border-radius: 20px;
+  background: #ffffff08; border: 1px solid var(--border); color: var(--text-dim);
+  transition: all .12s;
+}
+.chip:hover { color: var(--text); border-color: var(--accent); }
+.chip.active {
+  background: #7c5cff33; border-color: var(--accent-2); color: var(--accent-2);
+}
+.chip-row::-webkit-scrollbar { width: 6px; }
+.chip-row::-webkit-scrollbar-thumb { background: #ffffff18; border-radius: 3px; }
+
+/* ---------- version picker ---------- */
+.version-project {
+  font-size: 15px; font-weight: 600; color: var(--accent-2); margin-bottom: 16px;
+}
+.version-list { display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow-y: auto; margin-bottom: 18px; }
+
+.version-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  background: #ffffff06; border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 14px;
+}
+.version-row:hover { border-color: var(--accent); }
+.version-info { min-width: 0; }
+.version-name { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.version-meta { font-size: 11px; color: var(--text-dim); }
+
+.vtype {
+  font-size: 9px; text-transform: uppercase; letter-spacing: .5px;
+  padding: 2px 7px; border-radius: 20px; font-weight: 600;
+}
+.vtype.release { background: #12351f; border: 1px solid #2c6b3f; color: var(--success); }
+.vtype.beta { background: #3a2a10; border: 1px solid #7a5a20; color: #ffd9a0; }
+.vtype.alpha { background: #3a1220; border: 1px solid #6b2338; color: var(--danger); }
+
+.version-list::-webkit-scrollbar { width: 8px; }
+.version-list::-webkit-scrollbar-thumb { background: #ffffff18; border-radius: 4px; }

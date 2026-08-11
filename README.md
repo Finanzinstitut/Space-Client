@@ -9,7 +9,8 @@ A custom Minecraft: Java Edition launcher with a space theme, built with **Tauri
 - **Independent instances.** Every instance is its own folder with its own mods, worlds, RAM allocation and — importantly — its own storage location. You can put one instance on `D:\`, another on an external drive.
 - **Every Minecraft version**, pulled live from Mojang's official version manifest (releases, snapshots, betas, alphas).
 - **Mod loaders**: Fabric, Quilt, Forge and NeoForge. Fabric and Quilt install from their meta profiles; Forge and NeoForge run their official installers headlessly, because their bytecode-patching processors cannot be reproduced from a profile alone.
-- **Modrinth browser** built in: search, one-click install into a chosen instance, automatic download of required dependencies, and removal of installed mods. Results are filtered to the instance's Minecraft version and loader, so nothing incompatible shows up.
+- **Modrinth browser** for **mods, resource packs and shaders**. Opens straight onto Modrinth's popular listing (no search term needed), filterable by the official category tags, and everything is restricted to the instance's Minecraft version and — for mods — its loader.
+- **Pick a specific version** of any project instead of always taking the latest, listing only releases that fit the instance. Required dependencies are pulled in either way.
 - **Mod updates**: check all installed mods against Modrinth and update them individually or all at once. The old jar is only deleted after the new one is written.
 - **Automatic Java runtime download.** The launcher reads the `javaVersion` field of each Minecraft version and fetches the matching Mojang runtime (Java 8, 17 or 21). No manual JDK install needed.
 - **Free choice of the shared data folder**, so nothing has to sit on `C:`.
@@ -93,7 +94,7 @@ space-client/
 │           ├── config.rs       # settings, shared paths, language
 │           ├── instance.rs     # instance registry and folders
 │           ├── loader.rs       # Fabric / Quilt installation
-│           ├── mods.rs         # Modrinth search, install, dependencies
+│           ├── mods.rs         # Modrinth search, versions, packs, shaders
 │           ├── java.rs         # automatic JRE download
 │           ├── manifest.rs     # Mojang version manifest
 │           ├── download.rs     # client, libraries, assets

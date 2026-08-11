@@ -40,6 +40,20 @@ impl Instance {
     pub fn mods_dir(&self) -> PathBuf {
         self.game_dir().join("mods")
     }
+    pub fn resourcepacks_dir(&self) -> PathBuf {
+        self.game_dir().join("resourcepacks")
+    }
+    pub fn shaderpacks_dir(&self) -> PathBuf {
+        self.game_dir().join("shaderpacks")
+    }
+    /// Where a Modrinth project of the given type belongs.
+    pub fn content_dir(&self, project_type: &str) -> PathBuf {
+        match project_type {
+            "resourcepack" => self.resourcepacks_dir(),
+            "shader" => self.shaderpacks_dir(),
+            _ => self.mods_dir(),
+        }
+    }
 }
 
 pub fn load_all() -> Vec<Instance> {

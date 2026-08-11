@@ -310,9 +310,33 @@ $("btn-signout").addEventListener("click", async () => {
 
 
 // ---------------- mods (Modrinth) ----------------
-let modsInstance = null;
 let installedCache = [];
 let availableUpdates = [];
+let currentType = "mod";
+let selectedCategories = [];
+
+// Modrinth's official tag lists per project type. There is no "pvp" category
+// on Modrinth - typing "pvp" into the search box is the way to find those.
+const CATEGORIES = {
+  mod: [
+    "adventure", "cursed", "decoration", "economy", "equipment", "food",
+    "game-mechanics", "library", "magic", "management", "minigame", "mobs",
+    "optimization", "social", "storage", "technology", "transportation",
+    "utility", "worldgen",
+  ],
+  resourcepack: [
+    "8x-", "16x", "32x", "48x", "64x", "128x", "256x", "512x+",
+    "audio", "blocks", "combat", "decoration", "entities", "fonts", "gui",
+    "items", "locale", "modded", "models", "realistic", "simplistic",
+    "themed", "tweaks", "vanilla-like",
+  ],
+  shader: [
+    "atmosphere", "bloom", "cartoon", "colored-lighting", "fantasy",
+    "foliage", "path-tracing", "pbr", "realistic", "reflections",
+    "semi-realistic", "shadows", "vanilla-like", "potato", "low", "medium",
+    "high", "screenshot",
+  ],
+};
 
 function currentModsInstance() {
   const id = $("mods-instance").value;
@@ -344,7 +368,8 @@ function updateModsPanel() {
     panel.classList.add("hidden");
     return;
   }
-  if (inst.loader === "vanilla") {
+  // Vanilla instances can still take resource packs, just not mods.
+  if (inst.loader === "vanilla" && currentType === "mod") {
     warning.textContent = t("mods_vanilla_warning");
     warning.classList.remove("hidden");
     panel.classList.add("hidden");
@@ -352,8 +377,60 @@ function updateModsPanel() {
   }
   warning.classList.add("hidden");
   panel.classList.remove("hidden");
+  renderCategoryChips();
+  updateTypeNote();
   loadInstalledMods();
+  searchMods();
 }
+
+function updateTypeNote() {
+  const note = $("type-note");
+  if (currentType === "shader") note.textContent = t("shader_note");
+  else if (currentType === "resourcepack") note.textContent = t("packs_note");
+  else note.textContent = "";
+}
+
+function renderCategoryChips() {
+  const row = $("category-chips");
+  row.innerHTML = "";
+
+  const all = document.createElement("button");
+  all.className = "chip" + (selectedCategories.length === 0 ? " active" : "");
+  all.textContent = t("cat_all");
+  all.onclick = () => {
+    selectedCategories = [];
+    renderCategoryChips();
+    searchMods();
+  };
+  row.appendChild(all);
+
+  (CATEGORIES[currentType] || []).forEach((cat) => {
+    const chip = document.createElement("button");
+    chip.className = "chip" + (selectedCategories.includes(cat) ? " active" : "");
+    chip.textContent = cat;
+    chip.onclick = () => {
+      if (selectedCategories.includes(cat)) {
+        selectedCategories = selectedCategories.filter((c) => c !== cat);
+      } else {
+        selectedCategories.push(cat);
+      }
+      renderCategoryChips();
+      searchMods();
+    };
+    row.appendChild(chip);
+  });
+}
+
+document.querySelectorAll(".type-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".type-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentType = btn.dataset.type;
+    selectedCategories = [];
+    $("mods-query").value = "";
+    updateModsPanel();
+  });
+});
 
 $("mods-instance").addEventListener("change", () => {
   $("mods-results").innerHTML = "";
@@ -372,7 +449,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
   });
 });
 
-function modCard(data, actionBtn) {
+function modCard(data, actions) {
   const card = document.createElement("div");
   card.className = "mod-card";
   card.innerHTML = `
@@ -389,25 +466,30 @@ function modCard(data, actionBtn) {
   card.querySelector(".mod-title").textContent = data.title;
   card.querySelector(".mod-desc").textContent = data.description || "";
   card.querySelector(".mod-meta").textContent = data.meta || "";
-  card.appendChild(actionBtn);
+  card.appendChild(actions);
   return card;
 }
 
+/// Runs with an empty query too - Modrinth then returns its popular listing,
+/// so the browser shows something useful the moment it opens.
 async function searchMods() {
   const inst = currentModsInstance();
   if (!inst) return;
   const query = $("mods-query").value.trim();
   const list = $("mods-results");
-  list.innerHTML = "";
+  list.innerHTML = `<p class="empty-note">${t("loading")}</p>`;
   setStatus("mods-status", "");
 
   try {
     const hits = await invoke("search_mods", {
       query,
       instanceId: inst.id,
+      projectType: currentType,
+      categories: selectedCategories,
       offset: 0,
     });
 
+    list.innerHTML = "";
     if (hits.length === 0) {
       const p = document.createElement("p");
       p.className = "empty-note";
@@ -418,11 +500,22 @@ async function searchMods() {
 
     hits.forEach((hit) => {
       const already = installedCache.some((m) => m.project_id === hit.project_id);
-      const btn = document.createElement("button");
-      btn.className = already ? "btn secondary small" : "btn primary small";
-      btn.textContent = already ? t("btn_added") : t("btn_add");
-      btn.disabled = already;
-      btn.onclick = () => addMod(hit, btn);
+
+      const actions = document.createElement("div");
+      actions.className = "mod-actions";
+
+      const addBtn = document.createElement("button");
+      addBtn.className = already ? "btn secondary small" : "btn primary small";
+      addBtn.textContent = already ? t("btn_added") : t("btn_add");
+      addBtn.disabled = already;
+      addBtn.onclick = () => addMod(hit, addBtn);
+      actions.appendChild(addBtn);
+
+      const verBtn = document.createElement("button");
+      verBtn.className = "btn secondary small";
+      verBtn.textContent = t("btn_versions");
+      verBtn.onclick = () => openVersionPicker(hit);
+      actions.appendChild(verBtn);
 
       list.appendChild(
         modCard(
@@ -432,11 +525,12 @@ async function searchMods() {
             icon_url: hit.icon_url,
             meta: `${hit.author} · ${hit.downloads.toLocaleString()} ${t("downloads")}`,
           },
-          btn
+          actions
         )
       );
     });
   } catch (e) {
+    list.innerHTML = "";
     setStatus("mods-status", String(e), "error");
   }
 }
@@ -444,6 +538,96 @@ async function searchMods() {
 $("btn-mods-search").addEventListener("click", searchMods);
 $("mods-query").addEventListener("keydown", (e) => {
   if (e.key === "Enter") searchMods();
+});
+
+// ---------------- version picker ----------------
+async function openVersionPicker(hit) {
+  const inst = currentModsInstance();
+  if (!inst) return;
+
+  $("version-project").textContent = hit.title;
+  $("version-list").innerHTML = `<p class="empty-note">${t("versions_loading")}</p>`;
+  $("version-backdrop").classList.remove("hidden");
+
+  try {
+    const versions = await invoke("list_project_versions", {
+      projectId: hit.project_id,
+      instanceId: inst.id,
+      projectType: currentType,
+    });
+
+    const list = $("version-list");
+    list.innerHTML = "";
+
+    if (versions.length === 0) {
+      const p = document.createElement("p");
+      p.className = "empty-note";
+      p.textContent = t("versions_none");
+      list.appendChild(p);
+      return;
+    }
+
+    versions.forEach((v) => {
+      const row = document.createElement("div");
+      row.className = "version-row";
+
+      const info = document.createElement("div");
+      info.className = "version-info";
+
+      const name = document.createElement("div");
+      name.className = "version-name";
+      name.textContent = v.version_number;
+
+      const badge = document.createElement("span");
+      badge.className = "vtype " + v.version_type;
+      badge.textContent = v.version_type;
+      name.appendChild(badge);
+
+      const meta = document.createElement("div");
+      meta.className = "version-meta";
+      const loaderPart = v.loaders.length ? v.loaders.join(", ") + " · " : "";
+      meta.textContent = `${loaderPart}${t("version_compat", {
+        versions: v.game_versions.join(", "),
+      })} · ${v.downloads.toLocaleString()} ${t("downloads")}`;
+
+      info.appendChild(name);
+      info.appendChild(meta);
+      row.appendChild(info);
+
+      const btn = document.createElement("button");
+      btn.className = "btn primary small";
+      btn.textContent = t("btn_install_version");
+      btn.onclick = async () => {
+        btn.disabled = true;
+        setStatus("mods-status", t("mods_installing", { name: hit.title }));
+        try {
+          await invoke("install_project_version", {
+            instanceId: inst.id,
+            projectId: hit.project_id,
+            versionId: v.id,
+            projectType: currentType,
+          });
+          $("version-backdrop").classList.add("hidden");
+          setStatus("mods-status", t("mods_installed_msg", { count: 1 }), "success");
+          await loadInstalledMods();
+          await searchMods();
+        } catch (e) {
+          btn.disabled = false;
+          setStatus("mods-status", String(e), "error");
+        }
+      };
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+  } catch (e) {
+    $("version-list").innerHTML = "";
+    setStatus("mods-status", String(e), "error");
+    $("version-backdrop").classList.add("hidden");
+  }
+}
+
+$("btn-close-versions").addEventListener("click", () => {
+  $("version-backdrop").classList.add("hidden");
 });
 
 async function addMod(hit, btn) {
@@ -455,6 +639,7 @@ async function addMod(hit, btn) {
     const added = await invoke("install_mod", {
       instanceId: inst.id,
       projectId: hit.project_id,
+      projectType: currentType,
     });
     btn.textContent = t("btn_added");
     btn.className = "btn secondary small";
@@ -471,7 +656,10 @@ async function loadInstalledMods() {
   if (!inst) return;
   const list = $("mods-installed-list");
   try {
-    installedCache = await invoke("list_installed_mods", { instanceId: inst.id });
+    installedCache = await invoke("list_installed_mods", {
+      instanceId: inst.id,
+      projectType: currentType,
+    });
     list.innerHTML = "";
 
     if (installedCache.length === 0) {
@@ -500,9 +688,14 @@ async function loadInstalledMods() {
       btn.className = "btn danger small";
       btn.textContent = t("btn_remove");
       btn.onclick = async () => {
-        await invoke("remove_mod", { instanceId: inst.id, filename: m.filename });
+        await invoke("remove_mod", {
+          instanceId: inst.id,
+          filename: m.filename,
+          projectType: currentType,
+        });
         availableUpdates = availableUpdates.filter((u) => u.project_id !== m.project_id);
         await loadInstalledMods();
+        await searchMods();
       };
       actions.appendChild(btn);
 
@@ -523,7 +716,6 @@ async function loadInstalledMods() {
     setStatus("mods-status", String(e), "error");
   }
 }
-
 
 async function checkModUpdates() {
   const inst = currentModsInstance();
