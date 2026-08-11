@@ -81,7 +81,18 @@ async fn get_account() -> Result<Option<AccountInfo>, String> {
     Ok(Account::load().map(|a| AccountInfo {
         username: a.username,
         uuid: a.uuid,
+        offline: a.offline,
     }))
+}
+
+#[tauri::command]
+async fn login_offline(username: String) -> Result<AccountInfo, String> {
+    let account = auth::login_offline(&username).map_err(|e| e.to_string())?;
+    Ok(AccountInfo {
+        username: account.username,
+        uuid: account.uuid,
+        offline: account.offline,
+    })
 }
 
 #[tauri::command]
@@ -95,6 +106,7 @@ async fn complete_login(info: DeviceCodeInfo) -> Result<AccountInfo, String> {
     Ok(AccountInfo {
         username: account.username,
         uuid: account.uuid,
+        offline: account.offline,
     })
 }
 
@@ -117,7 +129,7 @@ async fn list_versions() -> Result<VersionListResponse, String> {
 
 #[tauri::command]
 async fn list_loaders(loader_name: String, mc_version: String) -> Result<Vec<LoaderVersion>, String> {
-    loader::list_loader_versions(&loader_name, &mc_version)
+    loader::list_versions_for(&loader_name, &mc_version)
         .await
         .map_err(|e| e.to_string())
 }
@@ -151,7 +163,7 @@ async fn delete_instance(id: String, delete_files: bool) -> Result<(), String> {
 #[tauri::command]
 async fn open_instance_folder(id: String) -> Result<String, String> {
     let inst = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
-    Ok(inst.game_dir().to_string_lossy().to_string())
+    Ok(inst.dir().to_string_lossy().to_string())
 }
 
 /// Downloads everything this instance needs: vanilla version, Java runtime,
@@ -172,7 +184,7 @@ async fn install_instance(
 
     // 2. mod loader on top
     if inst.loader != "vanilla" {
-        let loaders = loader::list_loader_versions(&inst.loader, &inst.mc_version)
+        let loaders = loader::list_versions_for(&inst.loader, &inst.mc_version)
             .await
             .map_err(|e| e.to_string())?;
         let chosen = loaders
@@ -186,14 +198,25 @@ async fn install_instance(
                 )
             })?;
 
-        let version_id = loader::install_loader(
-            &app,
-            &cfg,
-            &inst.loader,
-            &inst.mc_version,
-            &chosen.version,
-        )
-        .await
+        let version_id = match inst.loader.as_str() {
+            "fabric" | "quilt" => loader::install_loader(
+                &app,
+                &cfg,
+                &inst.loader,
+                &inst.mc_version,
+                &chosen.version,
+            )
+            .await,
+            "forge" | "neoforge" => loader::install_forge_like(
+                &app,
+                &cfg,
+                &inst.loader,
+                &inst.mc_version,
+                &chosen.version,
+            )
+            .await,
+            other => Err(anyhow::anyhow!("Unsupported loader: {}", other)),
+        }
         .map_err(|e| e.to_string())?;
 
         inst.loader_version = chosen.version.clone();
@@ -295,6 +318,7 @@ fn main() {
             start_login,
             complete_login,
             logout,
+            login_offline,
             list_versions,
             list_loaders,
             list_instances,

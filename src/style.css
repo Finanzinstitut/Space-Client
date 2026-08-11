@@ -386,3 +386,39 @@ input.grow { flex: 1; }
 .mod-card.has-update { border-color: var(--accent-2); box-shadow: 0 0 14px #38e0ff22; }
 .mod-card.has-update .mod-meta { color: var(--accent-2); opacity: 1; }
 .btn.hidden { display: none; }
+
+/* ---------- offline login ---------- */
+.divider {
+  display: flex; align-items: center; gap: 12px;
+  margin: 22px 0; color: var(--text-dim); font-size: 12px; text-transform: uppercase;
+}
+.divider::before, .divider::after {
+  content: ""; flex: 1; height: 1px; background: var(--border);
+}
+
+.offline-box {
+  background: #ffffff06; border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px;
+}
+.offline-box strong { display: block; margin-bottom: 4px; font-size: 14px; }
+.offline-box .hint { margin: 0 0 12px; }
+
+.badge {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  padding: 3px 8px; border-radius: 20px;
+  background: #4a3a10; border: 1px solid #7a5a20; color: #ffd9a0;
+}
+.badge.hidden { display: none; }
+
+.dot.offline { background: #c9a227; box-shadow: 0 0 8px #c9a22788; }
+.account-row img.placeholder {
+  background: radial-gradient(circle at 35% 30%, var(--accent-2), var(--accent) 70%);
+  opacity: .5;
+}
+
+/* ---------- icon button ---------- */
+.btn.icon-btn {
+  background: #1a1640; border: 1px solid var(--border); color: var(--text);
+  padding: 10px 12px; font-size: 15px; line-height: 1;
+}
+.btn.icon-btn:hover { background: #241f57; border-color: var(--accent); }

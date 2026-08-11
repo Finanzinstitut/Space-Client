@@ -37,6 +37,10 @@ pub struct Account {
     pub refresh_token: String,
     /// Unix seconds when the Minecraft token stops being valid.
     pub expires_at: i64,
+    /// True for a local offline profile. Offline accounts can only be used on
+    /// singleplayer worlds and servers running with online-mode=false.
+    #[serde(default)]
+    pub offline: bool,
 }
 
 impl Account {
@@ -68,6 +72,7 @@ impl Account {
 pub struct AccountInfo {
     pub username: String,
     pub uuid: String,
+    pub offline: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -359,6 +364,7 @@ async fn finish_minecraft_auth(ms_access_token: &str, refresh_token: String) -> 
         access_token: mc_token,
         refresh_token,
         expires_at: now_seconds() + expires_in,
+        offline: false,
     };
     account.save()?;
     Ok(account)
@@ -379,9 +385,51 @@ fn format_uuid(raw: &str) -> String {
     )
 }
 
+/// Creates a local offline profile. No Microsoft servers are involved, so this
+/// works even while the Mojang API approval is still pending - but it only
+/// gets you into singleplayer and online-mode=false servers.
+pub fn login_offline(username: &str) -> anyhow::Result<Account> {
+    let name = username.trim();
+    if name.len() < 3 || name.len() > 16 {
+        anyhow::bail!("Username must be between 3 and 16 characters.");
+    }
+    if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        anyhow::bail!("Username may only contain letters, numbers and underscores.");
+    }
+
+    let account = Account {
+        username: name.to_string(),
+        uuid: offline_uuid(name),
+        access_token: "0".to_string(),
+        refresh_token: String::new(),
+        expires_at: i64::MAX,
+        offline: true,
+    };
+    account.save()?;
+    Ok(account)
+}
+
+/// Mojang's own scheme for offline players: an MD5-style name-based UUID.
+/// Using the same scheme means worlds keep their player data if you later
+/// switch this instance to a real account with the same name.
+fn offline_uuid(username: &str) -> String {
+    use sha1::{Digest, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(format!("OfflinePlayer:{}", username).as_bytes());
+    let digest = hasher.finalize();
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[0..16]);
+    bytes[6] = (bytes[6] & 0x0f) | 0x30;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    uuid::Uuid::from_bytes(bytes).to_string()
+}
+
 /// Returns a valid account, refreshing the token if needed.
 pub async fn current_account() -> anyhow::Result<Account> {
     let account = Account::load().ok_or_else(|| anyhow::anyhow!("Not signed in."))?;
+    if account.offline {
+        return Ok(account);
+    }
     if account.is_expired() {
         return refresh_account(&account).await;
     }

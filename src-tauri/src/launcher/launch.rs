@@ -232,7 +232,10 @@ pub fn launch_instance(
         ("${auth_uuid}", account.uuid.clone()),
         ("${auth_access_token}", account.access_token.clone()),
         ("${auth_session}", format!("token:{}:{}", account.access_token, account.uuid)),
-        ("${user_type}", "msa".to_string()),
+        (
+            "${user_type}",
+            if account.offline { "legacy".to_string() } else { "msa".to_string() },
+        ),
         ("${user_properties}", "{}".to_string()),
         (
             "${version_type}",

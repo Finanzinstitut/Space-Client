@@ -94,8 +94,9 @@ function renderInstances() {
     actions.appendChild(installBtn);
 
     const folderBtn = document.createElement("button");
-    folderBtn.className = "btn secondary small";
-    folderBtn.textContent = t("btn_folder");
+    folderBtn.className = "btn icon-btn small";
+    folderBtn.textContent = "📁";
+    folderBtn.title = t("btn_open_folder");
     folderBtn.onclick = async () => {
       try {
         const path = await invoke("open_instance_folder", { id: inst.id });
@@ -227,14 +228,27 @@ function renderAccount() {
     $("account-signed-in").classList.remove("hidden");
     $("account-signed-out").classList.add("hidden");
     $("account-username").textContent = account.username;
-    $("account-skin").src = `https://crafatar.com/avatars/${account.uuid}?size=48&overlay`;
     $("account-name").textContent = account.username;
-    $("account-dot").classList.add("online");
+    $("account-badge").classList.toggle("hidden", !account.offline);
+
+    // Offline profiles have no Mojang skin to look up
+    if (account.offline) {
+      $("account-skin").removeAttribute("src");
+      $("account-skin").classList.add("placeholder");
+      $("account-dot").classList.remove("online");
+      $("account-dot").classList.add("offline");
+    } else {
+      $("account-skin").classList.remove("placeholder");
+      $("account-skin").src = `https://crafatar.com/avatars/${account.uuid}?size=48&overlay`;
+      $("account-dot").classList.add("online");
+      $("account-dot").classList.remove("offline");
+    }
   } else {
     $("account-signed-in").classList.add("hidden");
     $("account-signed-out").classList.remove("hidden");
     $("account-name").textContent = t("not_signed_in");
-    $("account-dot").classList.remove("online");
+    $("account-dot").classList.remove("online", "offline");
+    $("account-badge").classList.add("hidden");
   }
 }
 
@@ -259,6 +273,22 @@ $("btn-signin").addEventListener("click", async () => {
     $("account-signed-out").classList.remove("hidden");
     setStatus("account-status", String(e), "error");
   }
+});
+
+$("btn-offline-login").addEventListener("click", async () => {
+  const name = $("offline-username").value.trim();
+  setStatus("account-status", "");
+  try {
+    account = await invoke("login_offline", { username: name });
+    renderAccount();
+    setStatus("account-status", t("login_success"), "success");
+  } catch (e) {
+    setStatus("account-status", String(e), "error");
+  }
+});
+
+$("offline-username").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("btn-offline-login").click();
 });
 
 $("btn-open-browser").addEventListener("click", () => {

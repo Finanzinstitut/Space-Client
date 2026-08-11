@@ -95,6 +95,18 @@
         <div class="card">
           <div id="account-signed-out">
             <button id="btn-signin" class="btn primary" data-i18n="btn_signin"></button>
+            <p class="hint" data-i18n="ms_blocked_note"></p>
+
+            <div class="divider"><span data-i18n="or_divider"></span></div>
+
+            <div class="offline-box">
+              <strong data-i18n="offline_title"></strong>
+              <p class="hint" data-i18n="offline_hint"></p>
+              <div class="row">
+                <input id="offline-username" type="text" data-i18n-ph="offline_username" class="grow" />
+                <button id="btn-offline-login" class="btn secondary small" data-i18n="btn_offline_login"></button>
+              </div>
+            </div>
           </div>
 
           <div id="account-signed-in" class="hidden">
@@ -103,6 +115,7 @@
               <div class="account-row">
                 <img id="account-skin" alt="" width="48" height="48" />
                 <strong id="account-username"></strong>
+                <span id="account-badge" class="badge hidden" data-i18n="offline_badge"></span>
               </div>
             </div>
             <button id="btn-signout" class="btn secondary" data-i18n="btn_signout"></button>
@@ -200,6 +213,8 @@
           <option value="vanilla">Vanilla</option>
           <option value="fabric">Fabric</option>
           <option value="quilt">Quilt</option>
+          <option value="forge">Forge</option>
+          <option value="neoforge">NeoForge</option>
         </select>
       </div>
 
