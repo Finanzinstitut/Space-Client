@@ -169,6 +169,84 @@ async function launchInstance(inst) {
 }
 
 
+
+// ---------------- modpack import ----------------
+const PACK_EXTENSIONS = ["mrpack", "noriskpack", "nrc", "zip"];
+
+async function importModpack(archivePath) {
+  const fileName = archivePath.split(/[\\/]/).pop();
+  setStatus("global-status", t("import_running", { name: fileName }));
+  $("progress-wrap").classList.remove("hidden");
+
+  try {
+    const result = await invoke("import_modpack", {
+      archivePath,
+      parentPath: "",
+    });
+
+    await refreshInstances();
+
+    if (result.note) {
+      setStatus(
+        "global-status",
+        t("import_partial", { name: result.instance.name }) + " " + result.note,
+        "error"
+      );
+    } else {
+      setStatus("global-status", t("import_done", { name: result.instance.name }), "success");
+    }
+
+    // The pack brought its own mods, but the loader profile still has to be built.
+    await installInstance(result.instance);
+  } catch (e) {
+    setStatus("global-status", String(e), "error");
+  } finally {
+    $("progress-wrap").classList.add("hidden");
+  }
+}
+
+$("btn-import-modpack").addEventListener("click", async () => {
+  const selected = await open({
+    multiple: false,
+    title: t("import_choose"),
+    filters: [{ name: "Modpack", extensions: PACK_EXTENSIONS }],
+  });
+  if (selected) importModpack(selected);
+});
+
+// Native drag and drop: the webview reports real file paths, which is what the
+// Rust side needs - a browser File object would not carry one.
+(async () => {
+  try {
+    const webview = window.__TAURI__.webview.getCurrentWebview();
+    const zone = $("drop-zone");
+
+    await webview.onDragDropEvent((event) => {
+      const type = event.payload.type;
+
+      if (type === "over" || type === "enter") {
+        zone.classList.add("active");
+        return;
+      }
+      if (type === "leave") {
+        zone.classList.remove("active");
+        return;
+      }
+      if (type === "drop") {
+        zone.classList.remove("active");
+        const paths = event.payload.paths || [];
+        const pack = paths.find((p) =>
+          PACK_EXTENSIONS.some((ext) => p.toLowerCase().endsWith("." + ext))
+        );
+        if (pack) importModpack(pack);
+      }
+    });
+  } catch (e) {
+    // Drag and drop is a convenience - the button always works.
+    console.warn("Drag and drop unavailable:", e);
+  }
+})();
+
 // ---------------- loader versions ----------------
 /// Fills a <select> with the loader builds available for a Minecraft version.
 /// The first entry always means "let the launcher pick the newest stable one".

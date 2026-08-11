@@ -12,6 +12,8 @@
     "dialog:allow-open",
     "shell:default",
     "shell:allow-open",
-    "fs:default"
+    "fs:default",
+    "core:webview:default",
+    "core:webview:allow-internal-toggle-devtools"
   ]
 }

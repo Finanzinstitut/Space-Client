@@ -7,6 +7,7 @@ use launcher::config::LauncherConfig;
 use launcher::instance::{self, Instance};
 use launcher::loader::{self, LoaderVersion};
 use launcher::manifest::{fetch_version_manifest, VersionEntry};
+use launcher::modpack::{self, ImportResult};
 use launcher::mods::{self, InstalledMod, ModHit, ModUpdate, ProjectVersion};
 use launcher::update::{self, UpdateInfo};
 use serde::Serialize;
@@ -181,6 +182,19 @@ async fn update_instance(
     let (instance, needs_reinstall) =
         instance::update(&id, name, ram_mb, loader_version).map_err(|e| e.to_string())?;
     Ok(InstanceUpdateResult { instance, needs_reinstall })
+}
+
+#[tauri::command]
+async fn import_modpack(
+    app: tauri::AppHandle,
+    archive_path: String,
+    parent_path: String,
+    state: State<'_, AppState>,
+) -> Result<ImportResult, String> {
+    let cfg = state.config.lock().unwrap().clone();
+    modpack::import_modpack(&app, &cfg, archive_path, parent_path)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -422,6 +436,7 @@ fn main() {
             list_instances,
             create_instance,
             update_instance,
+            import_modpack,
             delete_instance,
             open_instance_folder,
             install_instance,

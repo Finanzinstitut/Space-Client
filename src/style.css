@@ -488,3 +488,22 @@ input.grow { flex: 1; }
 
 .tag.warn { background: #3a2a10; border-color: #7a5a20; color: #ffd9a0; }
 .field.hidden { display: none; }
+
+/* ---------- modpack drop zone ---------- */
+.head-actions { display: flex; gap: 10px; flex-shrink: 0; }
+
+.drop-zone {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  border: 2px dashed var(--border); border-radius: 14px;
+  padding: 22px; margin-bottom: 20px;
+  color: var(--text-dim); font-size: 13px;
+  background: #ffffff04;
+  transition: all .15s;
+}
+.drop-zone span:first-child { font-size: 22px; }
+.drop-zone.active {
+  border-color: var(--accent-2);
+  background: #38e0ff12;
+  color: var(--accent-2);
+  transform: scale(1.01);
+}

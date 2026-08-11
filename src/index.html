@@ -37,7 +37,15 @@
             <h1 data-i18n="instances_title"></h1>
             <p class="subtitle" data-i18n="instances_sub"></p>
           </div>
-          <button id="btn-new-instance" class="btn primary" data-i18n="btn_new_instance"></button>
+          <div class="head-actions">
+            <button id="btn-import-modpack" class="btn secondary" data-i18n="btn_import"></button>
+            <button id="btn-new-instance" class="btn primary" data-i18n="btn_new_instance"></button>
+          </div>
+        </div>
+
+        <div id="drop-zone" class="drop-zone">
+          <span>📦</span>
+          <span data-i18n="import_hint"></span>
         </div>
         <div id="instance-list" class="instance-list"></div>
         <div id="global-status" class="status-line"></div>

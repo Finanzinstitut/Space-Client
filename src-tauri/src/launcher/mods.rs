@@ -71,6 +71,12 @@ fn load_manifest(inst: &instance::Instance) -> Vec<InstalledMod> {
         .unwrap_or_default()
 }
 
+/// Lets the modpack importer register everything it downloaded, so imported
+/// packs take part in update checks like anything else.
+pub fn write_manifest(inst: &instance::Instance, mods: &[InstalledMod]) -> anyhow::Result<()> {
+    save_manifest(inst, mods)
+}
+
 fn save_manifest(inst: &instance::Instance, mods: &[InstalledMod]) -> anyhow::Result<()> {
     std::fs::write(manifest_path(inst), serde_json::to_string_pretty(mods)?)?;
     Ok(())

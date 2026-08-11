@@ -7,6 +7,7 @@ A custom Minecraft: Java Edition launcher with a space theme, built with **Tauri
 - **Microsoft account login** (device code flow), implemented end to end: Microsoft → Xbox Live → XSTS → Minecraft Services, with refresh tokens so you stay signed in. ⚠️ *Currently blocked pending Mojang API approval — see Status below.*
 - **Offline profile** as a fallback while approval is pending. Uses Mojang's own name-based UUID scheme, so worlds keep their player data if you later switch to a real account with the same name. Singleplayer and `online-mode=false` servers only.
 - **Independent instances.** Every instance is its own folder with its own mods, worlds, RAM allocation and — importantly — its own storage location. You can put one instance on `D:\`, another on an external drive. Instances can be renamed, re-sized and re-pointed at a different loader build after creation.
+- **Modpack import** by button or drag and drop. Modrinth `.mrpack` and NoRisk `.noriskpack` files import fully — Minecraft version, loader, memory setting, every mod, resource pack and shader, plus the pack's overrides. Imported content is registered so it joins the normal update checks.
 - **Pick the exact loader build** when creating or editing an instance, or leave it on automatic to get the newest stable one.
 - **Every Minecraft version**, pulled live from Mojang's official version manifest (releases, snapshots, betas, alphas).
 - **Mod loaders**: Fabric, Quilt, Forge and NeoForge. Fabric and Quilt install from their meta profiles; Forge and NeoForge run their official installers headlessly, because their bytecode-patching processors cannot be reproduced from a profile alone.
@@ -37,7 +38,8 @@ If you ever need to register a replacement, the app must use **Personal Microsof
 ## Current limitations
 
 - **Forge and NeoForge depend on their official installers.** The launcher downloads and runs them headlessly with `--installClient`. If an installer changes its command line or fails, the error output is passed straight through to the UI.
-- **CurseForge is not integrated yet** — it needs a personal API key, unlike Modrinth's open API.
+- **CurseForge is not integrated yet** — it needs a personal API key, unlike Modrinth's open API. Importing a CurseForge `.zip` therefore brings in the configs and overrides and sets up the right Minecraft version and loader, but **not the mods themselves**: the manifest only lists numeric project and file ids, which cannot be resolved to downloads without the API. The import reports how many mods were skipped.
+- **NoRisk packs**: the profile lists every entry under `mods`, whether it is a mod, a resource pack or a shader, without saying which. Space Client asks Modrinth in bulk to classify them so each file lands in the right folder. Entries disabled in the pack are written with a `.disabled` suffix. The pack's custom JVM arguments are not imported — there is no per-instance JVM argument field yet.
 - **The launcher update check only notifies**, it does not install anything — it opens the release page in your browser. A real auto-updater needs `tauri-plugin-updater` plus a signing key pair, since Tauri only accepts signed updates.
 - Skin avatars in the account view are loaded from Crafatar, a third-party service.
 
@@ -96,6 +98,7 @@ space-client/
 │           ├── instance.rs     # instance registry and folders
 │           ├── loader.rs       # Fabric / Quilt installation
 │           ├── mods.rs         # Modrinth search, versions, packs, shaders
+│           ├── modpack.rs      # .mrpack / CurseForge / .nrc import
 │           ├── java.rs         # automatic JRE download
 │           ├── manifest.rs     # Mojang version manifest
 │           ├── download.rs     # client, libraries, assets
@@ -116,9 +119,10 @@ space-client/
 | 5 ✅ | Fabric / Quilt installation |
 | 6 ✅ | Update check on startup |
 | 7 ✅ | Modrinth API: search and one-click install into an instance |
-| 8 | CurseForge API (needs an API key) |
+| 8 | CurseForge API (needs an API key) — would also complete CurseForge pack import |
 | 9 ✅ | Forge / NeoForge support |
-| 10 | Cosmetics, client mods, in-game HUD |
+| 10 | Modpack import (.mrpack ✅, CurseForge partial, .nrc pending format) |
+| 11 | Cosmetics, client mods, in-game HUD |
 
 ## License
 
