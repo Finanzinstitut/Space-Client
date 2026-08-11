@@ -161,9 +161,25 @@ async fn delete_instance(id: String, delete_files: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn open_instance_folder(id: String) -> Result<String, String> {
+async fn open_instance_folder(id: String) -> Result<(), String> {
     let inst = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
-    Ok(inst.dir().to_string_lossy().to_string())
+    let dir = inst.dir();
+    if !dir.exists() {
+        return Err(format!("Folder no longer exists: {}", dir.display()));
+    }
+
+    let result = if cfg!(target_os = "windows") {
+        std::process::Command::new("explorer").arg(&dir).spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(&dir).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(&dir).spawn()
+    };
+
+    // Windows explorer.exe returns a non-zero exit code even on success, so we
+    // only treat a failure to spawn at all as an error.
+    result.map_err(|e| format!("Could not open the folder: {}", e))?;
+    Ok(())
 }
 
 /// Downloads everything this instance needs: vanilla version, Java runtime,

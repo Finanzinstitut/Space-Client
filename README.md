@@ -39,6 +39,10 @@ If you ever need to register a replacement, the app must use **Personal Microsof
 - **The launcher update check only notifies**, it does not install anything — it opens the release page in your browser. A real auto-updater needs `tauri-plugin-updater` plus a signing key pair, since Tauri only accepts signed updates.
 - Skin avatars in the account view are loaded from Crafatar, a third-party service.
 
+## Troubleshooting a launch
+
+If the game does not appear, the launcher now reports the failure directly and writes the full game output to `latest-launch.log` inside the instance folder (the 📁 button opens it). The last lines of that file usually name the cause outright — a missing library, a Java version mismatch, or a mod that refuses to load.
+
 ## Data layout
 
 ```

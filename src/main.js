@@ -99,8 +99,7 @@ function renderInstances() {
     folderBtn.title = t("btn_open_folder");
     folderBtn.onclick = async () => {
       try {
-        const path = await invoke("open_instance_folder", { id: inst.id });
-        await shell.open(path);
+        await invoke("open_instance_folder", { id: inst.id });
       } catch (e) {
         setStatus("global-status", String(e), "error");
       }

@@ -166,9 +166,20 @@ pub fn launch_instance(
                 continue;
             }
         }
-        // Skip duplicate artifacts (loader profiles often repeat vanilla libs)
+        // Skip duplicate artifacts (loader profiles often repeat vanilla libs).
+        // The key MUST include the classifier, otherwise the natives jar
+        // (org.lwjgl:lwjgl:3.3.3:natives-windows) looks like a duplicate of the
+        // plain jar (org.lwjgl:lwjgl:3.3.3) and gets dropped - which leaves the
+        // game unable to load LWJGL and it dies before opening a window.
         if let Some(name) = lib.get("name").and_then(|v| v.as_str()) {
-            let key: String = name.rsplitn(2, ':').nth(1).unwrap_or(name).to_string();
+            let parts: Vec<&str> = name.split(':').collect();
+            let key = if parts.len() >= 4 {
+                format!("{}:{}:{}", parts[0], parts[1], parts[3])
+            } else if parts.len() >= 2 {
+                format!("{}:{}", parts[0], parts[1])
+            } else {
+                name.to_string()
+            };
             if seen.contains(&key) {
                 continue;
             }
@@ -299,8 +310,55 @@ pub fn launch_instance(
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
-    cmd.spawn()?;
-    Ok(())
+    let mut child = cmd.spawn().map_err(|e| {
+        anyhow::anyhow!("Could not start Java at '{}': {}", java_bin, e)
+    })?;
+
+    // Mirror the game output into the instance folder so crashes can be read
+    // afterwards instead of vanishing with the pipe.
+    let log_path = instance.dir().join("latest-launch.log");
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let log_for_thread = log_path.clone();
+
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader, Write};
+        let mut file = match fs::File::create(&log_for_thread) {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        if let Some(out) = stdout {
+            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                let _ = writeln!(file, "{}", line);
+            }
+        }
+        if let Some(err) = stderr {
+            for line in BufReader::new(err).lines().map_while(Result::ok) {
+                let _ = writeln!(file, "[stderr] {}", line);
+            }
+        }
+    });
+
+    // Give it a moment: if Java dies straight away, surface that instead of
+    // pretending the launch succeeded.
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    match child.try_wait() {
+        Ok(Some(status)) if !status.success() => {
+            let tail = std::fs::read_to_string(&log_path)
+                .map(|c| {
+                    let lines: Vec<&str> = c.lines().collect();
+                    let start = lines.len().saturating_sub(15);
+                    lines[start..].join("\n")
+                })
+                .unwrap_or_default();
+            anyhow::bail!(
+                "Minecraft quit immediately ({}). Last output:\n{}",
+                status,
+                tail
+            );
+        }
+        _ => Ok(()),
+    }
 }
 
 fn extract_natives_jar(jar_path: &PathBuf, dest_dir: &PathBuf) -> anyhow::Result<()> {
