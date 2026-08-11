@@ -6,7 +6,9 @@ use crate::launcher::loader::maven_to_path;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
-use std::process::Stdio;
+use std::process::{Child, Stdio};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
 
 fn current_os_name() -> &'static str {
     if cfg!(target_os = "windows") {
@@ -132,11 +134,20 @@ fn library_path(cfg: &LauncherConfig, lib: &serde_json::Value) -> Option<PathBuf
     Some(cfg.libraries_dir().join(rel))
 }
 
+/// One line of game output, streamed to the live console.
+#[derive(Debug, Clone, Serialize)]
+pub struct LogLine {
+    pub instance_id: String,
+    pub line: String,
+    pub error: bool,
+}
+
 pub fn launch_instance(
+    app: &AppHandle,
     cfg: &LauncherConfig,
     instance: &Instance,
     account: &Account,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Child> {
     let version_id = if instance.version_id.is_empty() {
         instance.mc_version.clone()
     } else {
@@ -314,30 +325,56 @@ pub fn launch_instance(
         anyhow::anyhow!("Could not start Java at '{}': {}", java_bin, e)
     })?;
 
-    // Mirror the game output into the instance folder so crashes can be read
-    // afterwards instead of vanishing with the pipe.
+    // Game output goes to a file in the instance folder and, at the same time,
+    // to the live console in the launcher.
     let log_path = instance.dir().join("latest-launch.log");
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let log_for_thread = log_path.clone();
 
-    std::thread::spawn(move || {
-        use std::io::{BufRead, BufReader, Write};
-        let mut file = match fs::File::create(&log_for_thread) {
-            Ok(f) => f,
-            Err(_) => return,
-        };
-        if let Some(out) = stdout {
-            for line in BufReader::new(out).lines().map_while(Result::ok) {
-                let _ = writeln!(file, "{}", line);
+    let file_handle = std::sync::Arc::new(std::sync::Mutex::new(
+        fs::File::create(&log_path).ok(),
+    ));
+
+    // stdout and stderr need separate readers, otherwise a quiet stream blocks
+    // the other one from being drained.
+    for (stream_out, stream_err) in [(stdout, None), (None, stderr)] {
+        let file_handle = file_handle.clone();
+        let app = app.clone();
+        let instance_id = instance.id.clone();
+
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader, Write};
+
+            let is_error = stream_err.is_some();
+            let reader: Box<dyn std::io::Read + Send> = if let Some(o) = stream_out {
+                Box::new(o)
+            } else if let Some(e) = stream_err {
+                Box::new(e)
+            } else {
+                return;
+            };
+
+            for line in BufReader::new(reader).lines().map_while(Result::ok) {
+                if let Ok(mut guard) = file_handle.lock() {
+                    if let Some(f) = guard.as_mut() {
+                        let _ = if is_error {
+                            writeln!(f, "[stderr] {}", line)
+                        } else {
+                            writeln!(f, "{}", line)
+                        };
+                    }
+                }
+                let _ = app.emit(
+                    "game://log",
+                    LogLine {
+                        instance_id: instance_id.clone(),
+                        line,
+                        error: is_error,
+                    },
+                );
             }
-        }
-        if let Some(err) = stderr {
-            for line in BufReader::new(err).lines().map_while(Result::ok) {
-                let _ = writeln!(file, "[stderr] {}", line);
-            }
-        }
-    });
+        });
+    }
 
     // Give it a moment: if Java dies straight away, surface that instead of
     // pretending the launch succeeded.
@@ -357,7 +394,7 @@ pub fn launch_instance(
                 tail
             );
         }
-        _ => Ok(()),
+        _ => Ok(child),
     }
 }
 

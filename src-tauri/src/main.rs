@@ -11,11 +11,20 @@ use launcher::modpack::{self, ImportResult};
 use launcher::mods::{self, InstalledMod, ModHit, ModUpdate, ProjectVersion};
 use launcher::update::{self, UpdateInfo};
 use serde::Serialize;
-use std::sync::Mutex;
-use tauri::State;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tauri::{Emitter, State};
 
 struct AppState {
     config: Mutex<LauncherConfig>,
+    /// Games currently running, so the live console can stop a stuck instance.
+    running: Arc<Mutex<HashMap<String, std::process::Child>>>,
+}
+
+#[derive(Clone, Serialize)]
+struct GameExit {
+    instance_id: String,
+    code: i32,
 }
 
 #[derive(Serialize)]
@@ -47,6 +56,7 @@ async fn set_settings(
     custom_java_path: String,
     language: String,
     check_updates: bool,
+    live_logs: bool,
     state: State<'_, AppState>,
 ) -> Result<LauncherConfig, String> {
     let mut cfg = state.config.lock().unwrap();
@@ -54,6 +64,7 @@ async fn set_settings(
     cfg.custom_java_path = custom_java_path;
     cfg.language = language;
     cfg.check_updates = check_updates;
+    cfg.live_logs = live_logs;
     cfg.save().map_err(|e| e.to_string())?;
     Ok(cfg.clone())
 }
@@ -174,13 +185,26 @@ struct InstanceUpdateResult {
 
 #[tauri::command]
 async fn update_instance(
+    app: tauri::AppHandle,
     id: String,
     name: String,
     ram_mb: u32,
     loader_version: String,
+    install_client_mod: bool,
 ) -> Result<InstanceUpdateResult, String> {
     let (instance, needs_reinstall) =
-        instance::update(&id, name, ram_mb, loader_version).map_err(|e| e.to_string())?;
+        instance::update(&id, name, ram_mb, loader_version, install_client_mod)
+            .map_err(|e| e.to_string())?;
+
+    // Reflect the toggle immediately rather than waiting for a reinstall.
+    if install_client_mod {
+        launcher::clientmod::install_client_mod(&app, &instance)
+            .await
+            .ok();
+    } else {
+        launcher::clientmod::remove_client_mod(&instance).ok();
+    }
+
     Ok(InstanceUpdateResult { instance, needs_reinstall })
 }
 
@@ -297,11 +321,19 @@ async fn install_instance(
     }
 
     instance::upsert(inst.clone()).map_err(|e| e.to_string())?;
+
+    // The companion mod goes in last, after the loader exists.
+    launcher::clientmod::install_client_mod(&app, &inst).await.ok();
+
     Ok(inst)
 }
 
 #[tauri::command]
-async fn launch_instance(id: String, state: State<'_, AppState>) -> Result<(), String> {
+async fn launch_instance(
+    app: tauri::AppHandle,
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     // Signing in is mandatory - no offline fallback.
     let account = auth::current_account()
         .await
@@ -310,7 +342,64 @@ async fn launch_instance(id: String, state: State<'_, AppState>) -> Result<(), S
     let cfg = state.config.lock().unwrap().clone();
     let inst = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
 
-    launcher::launch::launch_instance(&cfg, &inst, &account).map_err(|e| e.to_string())
+    let child = launcher::launch::launch_instance(&app, &cfg, &inst, &account)
+        .map_err(|e| e.to_string())?;
+
+    state.running.lock().unwrap().insert(id.clone(), child);
+
+    // Poll for the process ending so the console can close itself and the
+    // entry does not linger in the registry.
+    let running = state.running.clone();
+    let app_clone = app.clone();
+    let watch_id = id.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let mut map = match running.lock() {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        match map.get_mut(&watch_id) {
+            Some(child) => match child.try_wait() {
+                Ok(Some(status)) => {
+                    map.remove(&watch_id);
+                    let _ = app_clone.emit(
+                        "game://exit",
+                        GameExit {
+                            instance_id: watch_id.clone(),
+                            code: status.code().unwrap_or(-1),
+                        },
+                    );
+                    return;
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    map.remove(&watch_id);
+                    return;
+                }
+            },
+            None => return,
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn kill_instance(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let mut map = state.running.lock().unwrap();
+    match map.get_mut(&id) {
+        Some(child) => {
+            child.kill().map_err(|e| format!("Could not stop the game: {}", e))?;
+            map.remove(&id);
+            Ok(())
+        }
+        None => Err("This instance is not running.".to_string()),
+    }
+}
+
+#[tauri::command]
+async fn is_running(id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(state.running.lock().unwrap().contains_key(&id))
 }
 
 // ---------------- mods (Modrinth) ----------------
@@ -420,6 +509,7 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .manage(AppState {
             config: Mutex::new(config),
+            running: Arc::new(Mutex::new(HashMap::new())),
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
@@ -441,6 +531,8 @@ fn main() {
             open_instance_folder,
             install_instance,
             launch_instance,
+            kill_instance,
+            is_running,
             search_mods,
             list_project_versions,
             install_mod,

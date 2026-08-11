@@ -160,15 +160,82 @@ async function launchInstance(inst) {
     return;
   }
   setStatus("global-status", t("launching", { name: inst.name }));
+  if (config?.live_logs) openConsole(inst);
+
   try {
     await invoke("launch_instance", { id: inst.id });
     setStatus("global-status", t("launched", { name: inst.name }), "success");
   } catch (e) {
     setStatus("global-status", String(e), "error");
+    if (config?.live_logs) appendConsoleLine(String(e), "err");
   }
 }
 
 
+
+
+// ---------------- live console ----------------
+let consoleInstanceId = null;
+const MAX_CONSOLE_LINES = 2000;
+
+function openConsole(inst) {
+  consoleInstanceId = inst.id;
+  $("console-instance").textContent = inst.name;
+  $("console-output").innerHTML = "";
+  $("console-backdrop").classList.remove("hidden");
+  $("btn-console-kill").disabled = false;
+}
+
+function closeConsole() {
+  $("console-backdrop").classList.add("hidden");
+  consoleInstanceId = null;
+}
+
+function appendConsoleLine(text, kind = "") {
+  const out = $("console-output");
+  const line = document.createElement("div");
+  line.className = "console-line " + kind;
+  line.textContent = text;
+  out.appendChild(line);
+
+  // Keep the DOM from growing without bound during long sessions
+  while (out.childElementCount > MAX_CONSOLE_LINES) {
+    out.removeChild(out.firstChild);
+  }
+  if ($("console-autoscroll").checked) {
+    out.scrollTop = out.scrollHeight;
+  }
+}
+
+listen("game://log", (event) => {
+  const p = event.payload;
+  if (!consoleInstanceId || p.instance_id !== consoleInstanceId) return;
+  appendConsoleLine(p.line, p.error ? "err" : "");
+});
+
+listen("game://exit", (event) => {
+  const p = event.payload;
+  if (!consoleInstanceId || p.instance_id !== consoleInstanceId) return;
+  appendConsoleLine(t("console_exited", { code: p.code }), "info");
+  $("btn-console-kill").disabled = true;
+});
+
+$("btn-console-close").addEventListener("click", closeConsole);
+
+$("btn-console-clear").addEventListener("click", () => {
+  $("console-output").innerHTML = "";
+});
+
+$("btn-console-kill").addEventListener("click", async () => {
+  if (!consoleInstanceId) return;
+  try {
+    await invoke("kill_instance", { id: consoleInstanceId });
+    appendConsoleLine(t("console_killed"), "info");
+    $("btn-console-kill").disabled = true;
+  } catch (e) {
+    appendConsoleLine(String(e), "err");
+  }
+});
 
 // ---------------- modpack import ----------------
 const PACK_EXTENSIONS = ["mrpack", "noriskpack", "nrc", "zip"];
@@ -319,6 +386,11 @@ async function openEditModal(inst) {
   setStatus("edit-status", "");
 
   toggleLoaderVersionField("edit-loader-version-field", inst.loader);
+
+  // The companion mod is a Fabric mod; Forge and NeoForge cannot load it.
+  const modSupported = inst.loader === "fabric" || inst.loader === "quilt";
+  $("edit-clientmod-field").classList.toggle("hidden", !modSupported);
+  $("edit-client-mod").checked = inst.install_client_mod !== false;
   $("edit-backdrop").classList.remove("hidden");
 
   await fillLoaderVersions(
@@ -346,6 +418,7 @@ $("btn-confirm-edit").addEventListener("click", async () => {
       name: $("edit-name").value.trim(),
       ramMb: parseInt($("edit-ram").value, 10),
       loaderVersion: $("edit-loader-version").value,
+      installClientMod: $("edit-client-mod").checked,
     });
 
     $("edit-backdrop").classList.add("hidden");
@@ -1011,6 +1084,7 @@ $("btn-save-settings").addEventListener("click", async () => {
       customJavaPath: $("java-path").value.trim(),
       language: $("language-select").value,
       checkUpdates: $("check-updates").checked,
+      liveLogs: $("live-logs").checked,
     });
     setLanguage(config.language);
     applyTranslations();
@@ -1064,6 +1138,7 @@ async function init() {
   $("ram-value").textContent = config.max_ram_mb + " MB";
   $("language-select").value = config.language || "en";
   $("check-updates").checked = config.check_updates !== false;
+  $("live-logs").checked = config.live_logs === true;
 
   account = await invoke("get_account");
   renderAccount();

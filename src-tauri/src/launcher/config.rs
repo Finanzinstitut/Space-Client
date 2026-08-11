@@ -28,6 +28,10 @@ pub struct LauncherConfig {
     pub language: String,
     #[serde(default = "default_true")]
     pub check_updates: bool,
+    /// Opens a live console when a game starts, so a hanging instance can be
+    /// watched and killed without digging through log files.
+    #[serde(default)]
+    pub live_logs: bool,
 }
 
 fn default_language() -> String {
@@ -49,6 +53,7 @@ impl Default for LauncherConfig {
             custom_java_path: String::new(),
             language: default_language(),
             check_updates: true,
+            live_logs: false,
         }
     }
 }

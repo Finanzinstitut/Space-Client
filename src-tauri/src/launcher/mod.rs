@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod clientmod;
 pub mod config;
 pub mod download;
 pub mod instance;

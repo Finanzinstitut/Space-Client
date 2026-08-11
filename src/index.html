@@ -199,6 +199,14 @@
             </label>
           </div>
 
+          <div class="field grow">
+            <label class="checkbox">
+              <input type="checkbox" id="live-logs" />
+              <span data-i18n="field_live_logs"></span>
+            </label>
+            <p class="hint" data-i18n="live_logs_hint"></p>
+          </div>
+
           <div class="row actions">
             <button id="btn-save-settings" class="btn primary" data-i18n="btn_save"></button>
           </div>
@@ -294,6 +302,14 @@
         <span id="edit-ram-value"></span>
       </div>
 
+      <div class="field grow" id="edit-clientmod-field">
+        <label class="checkbox">
+          <input type="checkbox" id="edit-client-mod" />
+          <span data-i18n="field_client_mod"></span>
+        </label>
+        <p class="hint" data-i18n="client_mod_hint"></p>
+      </div>
+
       <div class="row actions">
         <button id="btn-cancel-edit" class="btn secondary" data-i18n="btn_cancel"></button>
         <button id="btn-confirm-edit" class="btn primary" data-i18n="btn_save"></button>
@@ -311,6 +327,28 @@
       <div class="row actions">
         <button id="btn-close-versions" class="btn secondary" data-i18n="btn_cancel"></button>
       </div>
+    </div>
+  </div>
+
+  <!-- LIVE CONSOLE -->
+  <div id="console-backdrop" class="console-backdrop hidden">
+    <div class="console-window">
+      <div class="console-header">
+        <div>
+          <strong data-i18n="console_title"></strong>
+          <span id="console-instance" class="console-instance"></span>
+        </div>
+        <div class="console-actions">
+          <label class="checkbox small-check">
+            <input type="checkbox" id="console-autoscroll" checked />
+            <span data-i18n="console_autoscroll"></span>
+          </label>
+          <button id="btn-console-clear" class="btn secondary small" data-i18n="btn_clear"></button>
+          <button id="btn-console-kill" class="btn danger small" data-i18n="btn_kill"></button>
+          <button id="btn-console-close" class="btn secondary small" data-i18n="btn_close"></button>
+        </div>
+      </div>
+      <div id="console-output" class="console-output"></div>
     </div>
   </div>
 

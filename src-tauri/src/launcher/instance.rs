@@ -3,6 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+fn default_true() -> bool {
+    true
+}
+
 fn registry_file() -> PathBuf {
     config_dir().join("instances.json")
 }
@@ -25,6 +29,11 @@ pub struct Instance {
     #[serde(default)]
     pub version_id: String,
     pub ram_mb: u32,
+    /// Whether the Space Client companion mod is kept in this instance.
+    /// On by default, since it is what makes this a client rather than a
+    /// plain launcher - but any instance can opt out.
+    #[serde(default = "default_true")]
+    pub install_client_mod: bool,
     #[serde(default)]
     pub created: String,
 }
@@ -94,6 +103,7 @@ pub fn update(
     name: String,
     ram_mb: u32,
     loader_version: String,
+    install_client_mod: bool,
 ) -> anyhow::Result<(Instance, bool)> {
     let mut list = load_all();
     let inst = list
@@ -109,6 +119,7 @@ pub fn update(
 
     inst.name = name.trim().to_string();
     inst.ram_mb = ram_mb.max(512);
+    inst.install_client_mod = install_client_mod;
     if loader_changed {
         inst.loader_version = loader_version;
         // Force a reinstall - the old profile no longer matches.
@@ -192,6 +203,7 @@ pub fn create(
         loader_version,
         version_id: mc_version,
         ram_mb,
+        install_client_mod: true,
         created: format!("{}", chrono_now()),
     };
 
