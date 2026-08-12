@@ -173,6 +173,7 @@ async fn complete_login(info: DeviceCodeInfo) -> Result<AccountInfo, String> {
         username: account.username,
         uuid: account.uuid,
         offline: account.offline,
+        active: true,
     })
 }
 
