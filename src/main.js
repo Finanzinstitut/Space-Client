@@ -1,4 +1,5 @@
 import { t, setLanguage, applyTranslations } from "./i18n.js";
+import { renderSkin, renderCape } from "./skinrender.js";
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -175,10 +176,135 @@ async function launchInstance(inst) {
 
 
 
+
+// ---------------- accounts ----------------
+let accounts = [];
+
+async function refreshAccounts() {
+  try {
+    accounts = await invoke("list_accounts");
+  } catch {
+    accounts = [];
+  }
+  renderAccountList();
+}
+
+function renderAccountList() {
+  const list = $("account-list");
+  list.innerHTML = "";
+  if (accounts.length === 0) return;
+
+  const heading = document.createElement("label");
+  heading.textContent = t("accounts_title");
+  list.appendChild(heading);
+
+  accounts.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "account-row" + (entry.active ? " active" : "");
+
+    const avatar = document.createElement("canvas");
+    avatar.className = "account-avatar";
+    avatar.width = 32;
+    avatar.height = 32;
+    drawHead(avatar, entry);
+
+    const name = document.createElement("div");
+    name.className = "account-name-row";
+    name.textContent = entry.username;
+    if (entry.offline) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = t("offline_badge");
+      name.appendChild(badge);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "account-actions";
+
+    if (entry.active) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = t("account_active");
+      actions.appendChild(tag);
+    } else {
+      const swap = document.createElement("button");
+      swap.className = "btn secondary small";
+      swap.textContent = t("btn_switch");
+      swap.onclick = () => switchAccount(entry);
+      actions.appendChild(swap);
+    }
+
+    const remove = document.createElement("button");
+    remove.className = "btn danger small";
+    remove.textContent = t("btn_remove_account");
+    remove.onclick = async () => {
+      if (!confirm(t("confirm_remove_account", { name: entry.username }))) return;
+      account = await invoke("remove_account", { uuid: entry.uuid });
+      skinProfile = null;
+      await refreshAccounts();
+      renderAccount();
+      loadSkinProfile();
+    };
+    actions.appendChild(remove);
+
+    row.appendChild(avatar);
+    row.appendChild(name);
+    row.appendChild(actions);
+    list.appendChild(row);
+  });
+}
+
+async function switchAccount(entry) {
+  try {
+    account = await invoke("switch_account", { uuid: entry.uuid });
+    skinProfile = null;
+    await refreshAccounts();
+    renderAccount();
+    refreshAccounts();
+    loadSkinProfile();
+    setStatus("account-status", t("account_switched", { name: entry.username }), "success");
+  } catch (e) {
+    setStatus("account-status", String(e), "error");
+  }
+}
+
+/// Small head render for the account rows. Offline profiles have no texture,
+/// so they get a plain placeholder instead of a failed request.
+async function drawHead(canvas, entry) {
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+
+  if (entry.offline) {
+    ctx.fillStyle = "#241f57";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+
+  try {
+    const profile = entry.active && skinProfile ? skinProfile : null;
+    const url = profile?.skin_url;
+    if (!url) {
+      ctx.fillStyle = "#241f57";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, 8, 8, 8, 8, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(image, 40, 8, 8, 8, 0, 0, canvas.width, canvas.height);
+    };
+    image.src = url;
+  } catch {
+    // A missing avatar is cosmetic; leave the canvas blank.
+  }
+}
+
 // ---------------- skin & capes ----------------
 let skinProfile = null;
 
-function renderSkin() {
+function renderSkinView() {
   const warning = $("skin-warning");
   const panel = $("skin-panel");
 
@@ -199,11 +325,14 @@ function renderSkin() {
 
   if (!skinProfile) return;
 
-  // Crafatar renders a full body from the account's UUID, which saves
-  // parsing the skin PNG ourselves just to show a preview.
-  $("skin-body").src =
-    `https://crafatar.com/renders/body/${skinProfile.uuid}?size=180&overlay&t=${Date.now()}`;
   $("skin-name").textContent = skinProfile.username;
+
+  const isSlimModel = (skinProfile.variant || "").toUpperCase() === "SLIM";
+  if (skinProfile.skin_url) {
+    renderSkin($("skin-canvas"), skinProfile.skin_url, isSlimModel).catch(() => {
+      setStatus("skin-status", t("skin_render_failed"), "error");
+    });
+  }
 
   const isSlim = (skinProfile.variant || "").toUpperCase() === "SLIM";
   $("model-classic").classList.toggle("active", !isSlim);
@@ -235,9 +364,9 @@ function renderCapes() {
     const item = document.createElement("button");
     item.className = "cape-item" + (cape.active ? " active" : "");
 
-    const thumb = document.createElement("div");
+    const thumb = document.createElement("canvas");
     thumb.className = "cape-thumb";
-    if (cape.url) thumb.style.backgroundImage = `url("${cape.url}")`;
+    if (cape.url) renderCape(thumb, cape.url).catch(() => {});
 
     const label = document.createElement("span");
     label.textContent = cape.alias;
@@ -251,14 +380,15 @@ function renderCapes() {
 
 async function loadSkinProfile() {
   if (!account || account.offline) {
-    renderSkin();
+    renderSkinView();
     return;
   }
   setStatus("skin-status", t("skin_loading"));
   try {
     skinProfile = await invoke("get_skin_profile");
     setStatus("skin-status", "");
-    renderSkin();
+    renderSkinView();
+    renderAccountList();
   } catch (e) {
     setStatus("skin-status", String(e), "error");
   }
@@ -271,7 +401,7 @@ async function uploadSkinFile(path) {
   try {
     skinProfile = await invoke("upload_skin", { path, variant });
     setStatus("skin-status", t("skin_uploaded"), "success");
-    renderSkin();
+    renderSkinView();
   } catch (e) {
     setStatus("skin-status", String(e), "error");
   }
@@ -282,7 +412,7 @@ async function applyVariant(variant) {
   try {
     skinProfile = await invoke("set_skin_variant", { variant });
     setStatus("skin-status", t("skin_model_changed"), "success");
-    renderSkin();
+    renderSkinView();
   } catch (e) {
     setStatus("skin-status", String(e), "error");
   }
@@ -293,7 +423,7 @@ async function applyCape(capeId) {
   try {
     skinProfile = await invoke("set_cape", { capeId });
     setStatus("skin-status", t("skin_cape_changed"), "success");
-    renderSkin();
+    renderSkinView();
   } catch (e) {
     setStatus("skin-status", String(e), "error");
   }
@@ -730,6 +860,7 @@ $("btn-signin").addEventListener("click", async () => {
     account = await invoke("complete_login", { info: pendingLogin });
     $("login-flow").classList.add("hidden");
     renderAccount();
+    refreshAccounts();
     loadSkinProfile();
     setStatus("account-status", t("login_success"), "success");
   } catch (e) {
@@ -772,7 +903,7 @@ $("btn-signout").addEventListener("click", async () => {
   account = null;
   skinProfile = null;
   renderAccount();
-  renderSkin();
+  renderSkinView();
 });
 
 
@@ -1316,6 +1447,7 @@ async function init() {
 
   account = await invoke("get_account");
   renderAccount();
+  await refreshAccounts();
   loadSkinProfile();
 
   await refreshInstances();

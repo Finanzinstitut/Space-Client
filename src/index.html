@@ -119,8 +119,7 @@
           <div class="card skin-preview-card">
             <label data-i18n="skin_current"></label>
             <div class="skin-preview">
-              <img id="skin-body" alt="" />
-              <img id="cape-preview" alt="" class="cape-preview hidden" />
+              <canvas id="skin-canvas"></canvas>
             </div>
             <div id="skin-name" class="skin-name"></div>
           </div>
@@ -170,6 +169,8 @@
               </div>
             </div>
           </div>
+
+          <div id="account-list" class="account-list"></div>
 
           <div id="account-signed-in" class="hidden">
             <div class="field">

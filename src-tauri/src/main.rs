@@ -2,7 +2,7 @@
 
 mod launcher;
 
-use launcher::auth::{self, Account, AccountInfo, DeviceCodeInfo};
+use launcher::auth::{self, Account, AccountInfo, AccountStore, DeviceCodeInfo};
 use launcher::config::LauncherConfig;
 use launcher::instance::{self, Instance};
 use launcher::loader::{self, LoaderVersion};
@@ -95,6 +95,58 @@ async fn get_account() -> Result<Option<AccountInfo>, String> {
         username: a.username,
         uuid: a.uuid,
         offline: a.offline,
+        active: true,
+    }))
+}
+
+/// Every signed-in account, with the active one flagged.
+#[tauri::command]
+async fn list_accounts() -> Result<Vec<AccountInfo>, String> {
+    let store = AccountStore::load();
+    Ok(store
+        .accounts
+        .iter()
+        .map(|a| AccountInfo {
+            username: a.username.clone(),
+            uuid: a.uuid.clone(),
+            offline: a.offline,
+            active: a.uuid == store.active_uuid,
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn switch_account(uuid: String) -> Result<AccountInfo, String> {
+    let mut store = AccountStore::load();
+    let account = store
+        .accounts
+        .iter()
+        .find(|a| a.uuid == uuid)
+        .cloned()
+        .ok_or_else(|| "That account is not signed in.".to_string())?;
+
+    store.active_uuid = uuid;
+    store.save().map_err(|e| e.to_string())?;
+
+    Ok(AccountInfo {
+        username: account.username,
+        uuid: account.uuid,
+        offline: account.offline,
+        active: true,
+    })
+}
+
+#[tauri::command]
+async fn remove_account(uuid: String) -> Result<Option<AccountInfo>, String> {
+    let mut store = AccountStore::load();
+    store.remove(&uuid);
+    store.save().map_err(|e| e.to_string())?;
+
+    Ok(store.active().map(|a| AccountInfo {
+        username: a.username,
+        uuid: a.uuid,
+        offline: a.offline,
+        active: true,
     }))
 }
 
@@ -105,6 +157,7 @@ async fn login_offline(username: String) -> Result<AccountInfo, String> {
         username: account.username,
         uuid: account.uuid,
         offline: account.offline,
+        active: true,
     })
 }
 
@@ -544,6 +597,9 @@ fn main() {
             complete_login,
             logout,
             login_offline,
+            list_accounts,
+            switch_account,
+            remove_account,
             get_skin_profile,
             upload_skin,
             set_skin_variant,

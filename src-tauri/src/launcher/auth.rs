@@ -27,6 +27,72 @@ fn account_file() -> PathBuf {
     config_dir().join("account.json")
 }
 
+fn accounts_file() -> PathBuf {
+    config_dir().join("accounts.json")
+}
+
+/// All signed-in accounts plus which one is active.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct AccountStore {
+    pub accounts: Vec<Account>,
+    pub active_uuid: String,
+}
+
+impl AccountStore {
+    pub fn load() -> AccountStore {
+        if let Ok(data) = fs::read_to_string(accounts_file()) {
+            if let Ok(store) = serde_json::from_str::<AccountStore>(&data) {
+                return store;
+            }
+        }
+
+        // Migrate a single account from the old layout so nobody has to sign in
+        // again after updating.
+        let mut store = AccountStore::default();
+        if let Ok(data) = fs::read_to_string(account_file()) {
+            if let Ok(account) = serde_json::from_str::<Account>(&data) {
+                store.active_uuid = account.uuid.clone();
+                store.accounts.push(account);
+                store.save().ok();
+            }
+        }
+        store
+    }
+
+    pub fn save(&self) -> anyhow::Result<()> {
+        fs::write(accounts_file(), serde_json::to_string_pretty(self)?)?;
+        Ok(())
+    }
+
+    pub fn active(&self) -> Option<Account> {
+        self.accounts
+            .iter()
+            .find(|a| a.uuid == self.active_uuid)
+            .cloned()
+            .or_else(|| self.accounts.first().cloned())
+    }
+
+    /// Adds or replaces an account and makes it the active one.
+    pub fn upsert(&mut self, account: Account) {
+        match self.accounts.iter_mut().find(|a| a.uuid == account.uuid) {
+            Some(existing) => *existing = account.clone(),
+            None => self.accounts.push(account.clone()),
+        }
+        self.active_uuid = account.uuid;
+    }
+
+    pub fn remove(&mut self, uuid: &str) {
+        self.accounts.retain(|a| a.uuid != uuid);
+        if self.active_uuid == uuid {
+            self.active_uuid = self
+                .accounts
+                .first()
+                .map(|a| a.uuid.clone())
+                .unwrap_or_default();
+        }
+    }
+}
+
 /// The signed-in Minecraft account. The refresh token lets us log back in
 /// silently on the next launcher start.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -45,19 +111,21 @@ pub struct Account {
 
 impl Account {
     pub fn load() -> Option<Account> {
-        let data = fs::read_to_string(account_file()).ok()?;
-        serde_json::from_str(&data).ok()
+        AccountStore::load().active()
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
-        fs::write(account_file(), serde_json::to_string_pretty(self)?)?;
-        Ok(())
+        let mut store = AccountStore::load();
+        store.upsert(self.clone());
+        store.save()
     }
 
+    /// Signs out of every account.
     pub fn clear() -> anyhow::Result<()> {
-        let f = account_file();
-        if f.exists() {
-            fs::remove_file(f)?;
+        for f in [account_file(), accounts_file()] {
+            if f.exists() {
+                fs::remove_file(f)?;
+            }
         }
         Ok(())
     }
@@ -73,6 +141,8 @@ pub struct AccountInfo {
     pub username: String,
     pub uuid: String,
     pub offline: bool,
+    #[serde(default)]
+    pub active: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

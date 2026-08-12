@@ -627,3 +627,25 @@ input.grow { flex: 1; }
 }
 .cape-item span { font-size: 10px; color: var(--text-dim); text-align: center; line-height: 1.2; }
 .cape-item.active span { color: var(--accent-2); }
+
+/* ---------- skin canvas + accounts ---------- */
+#skin-canvas { image-rendering: pixelated; max-height: 200px; }
+
+.account-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+
+.account-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  background: #ffffff06; border: 1px solid var(--border); border-radius: 10px;
+}
+.account-row.active { border-color: var(--accent-2); background: #38e0ff10; }
+
+.account-avatar {
+  width: 32px; height: 32px; border-radius: 6px;
+  image-rendering: pixelated; background: #100d2a; flex-shrink: 0;
+}
+.account-name-row {
+  flex: 1; font-size: 14px; font-weight: 600;
+  display: flex; align-items: center; gap: 8px;
+}
+.account-actions { display: flex; gap: 6px; align-items: center; }
