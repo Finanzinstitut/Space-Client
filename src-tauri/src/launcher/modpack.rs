@@ -278,6 +278,9 @@ async fn import_modrinth(
     let files = index.get("files").and_then(|v| v.as_array()).unwrap_or(&empty);
     let skipped = download_mrpack_files(app, &game_dir, files).await;
 
+    // mrpack files are addressed by path rather than project id, so they are
+    // not in the manifest and repair has nothing to check. The pack declares
+    // the Minecraft version it targets, so a mismatch is unlikely here.
     let note = if skipped.is_empty() {
         String::new()
     } else {
@@ -574,10 +577,33 @@ async fn import_norisk(
     let entries = installed.lock().unwrap().clone();
     crate::launcher::mods::write_manifest(&inst, &entries).ok();
 
-    let skipped = skipped.lock().unwrap().clone();
+    // Packs pin exact versions, which are often not the ones this Minecraft
+    // version and loader need - that is what makes Fabric refuse to start.
+    // Repairing straight after the import puts every mod on a version that
+    // actually fits, and parks the ones with no fit at all.
+    let repair = crate::launcher::mods::repair_instance(app, inst.id.clone()).await;
+
+    let mut skipped = skipped.lock().unwrap().clone();
     let mut note = String::new();
     if !skipped.is_empty() {
         note.push_str(&format!("{} item(s) could not be downloaded. ", skipped.len()));
+    }
+
+    if let Ok(report) = repair {
+        if !report.replaced.is_empty() {
+            note.push_str(&format!(
+                "{} mod(s) were moved onto a version that fits this instance. ",
+                report.replaced.len()
+            ));
+        }
+        if !report.incompatible.is_empty() {
+            note.push_str(&format!(
+                "{} mod(s) have no version for Minecraft {} and were moved into the 'incompatible' folder so the game can still start. ",
+                report.incompatible.len(),
+                inst.mc_version
+            ));
+            skipped.extend(report.incompatible.clone());
+        }
     }
     if profile
         .pointer("/settings/custom_jvm_args")

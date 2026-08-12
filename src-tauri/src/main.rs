@@ -8,7 +8,7 @@ use launcher::instance::{self, Instance};
 use launcher::loader::{self, LoaderVersion};
 use launcher::manifest::{fetch_version_manifest, VersionEntry};
 use launcher::modpack::{self, ImportResult};
-use launcher::mods::{self, InstalledMod, ModHit, ModUpdate, ProjectVersion};
+use launcher::mods::{self, InstalledMod, ModHit, ModUpdate, ProjectVersion, RepairReport};
 use launcher::skin::{self, SkinProfile};
 use launcher::update::{self, UpdateInfo};
 use serde::Serialize;
@@ -555,6 +555,18 @@ async fn remove_mod(
     mods::remove_mod(&instance_id, &filename, &project_type).map_err(|e| e.to_string())
 }
 
+/// Puts every installed mod onto a version that fits this instance, and parks
+/// the ones that have none.
+#[tauri::command]
+async fn repair_instance_mods(
+    app: tauri::AppHandle,
+    instance_id: String,
+) -> Result<RepairReport, String> {
+    mods::repair_instance(&app, instance_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn check_mod_updates(instance_id: String) -> Result<Vec<ModUpdate>, String> {
     mods::check_updates(instance_id).await.map_err(|e| e.to_string())
@@ -623,6 +635,7 @@ fn main() {
             install_project_version,
             list_installed_mods,
             remove_mod,
+            repair_instance_mods,
             check_mod_updates,
             update_mod,
             update_all_mods,

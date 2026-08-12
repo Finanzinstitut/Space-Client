@@ -649,3 +649,116 @@ pub async fn update_all(app: &AppHandle, instance_id: String) -> anyhow::Result<
     }
     Ok(count)
 }
+
+#[derive(Debug, Serialize, Clone)]
+pub struct RepairReport {
+    pub replaced: Vec<String>,
+    /// Files with no version at all for this Minecraft version and loader.
+    pub incompatible: Vec<String>,
+    pub checked: u32,
+}
+
+/// Brings every installed project onto a version that actually fits this
+/// instance.
+///
+/// This is the difference between "update" and "repair": the update check only
+/// looks for something *newer*, so a mod pinned to the wrong Minecraft version
+/// stays wrong. Repair asks Modrinth for the newest version that matches this
+/// instance and swaps it in, whichever direction that is.
+///
+/// Anything with no compatible version is moved into an `incompatible` folder
+/// rather than deleted, so nothing is lost and the game can still start.
+pub async fn repair_instance(app: &AppHandle, instance_id: String) -> anyhow::Result<RepairReport> {
+    let inst = instance::get(&instance_id).ok_or_else(|| anyhow::anyhow!("Instance not found"))?;
+    let mut manifest = load_manifest(&inst);
+
+    let mut replaced = Vec::new();
+    let mut incompatible = Vec::new();
+    let total = manifest.len() as u64;
+
+    for index in 0..manifest.len() {
+        let entry = manifest[index].clone();
+
+        emit_progress(app, InstallProgress {
+            stage: "repair".into(),
+            current: index as u64,
+            total,
+            file: entry.title.clone(),
+        });
+
+        // Hand-added files have no project to look up
+        if entry.project_id.is_empty() {
+            continue;
+        }
+
+        let best = best_version(
+            &entry.project_id,
+            &inst.mc_version,
+            &inst.loader,
+            &entry.project_type,
+        )
+        .await;
+
+        let dir = inst.content_dir(&entry.project_type);
+        let current_path = dir.join(&entry.filename);
+
+        match best {
+            Ok(version) => {
+                let version_id = version
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+
+                // Already on the right version, and the file is really there
+                if version_id == entry.version_id && current_path.exists() {
+                    continue;
+                }
+
+                match download_version(&inst, &version, &entry.project_id, &entry.project_type, &entry.title).await {
+                    Ok(new_entry) => {
+                        if new_entry.filename != entry.filename && current_path.exists() {
+                            std::fs::remove_file(&current_path).ok();
+                        }
+                        replaced.push(format!(
+                            "{} {} -> {}",
+                            entry.title, entry.version_number, new_entry.version_number
+                        ));
+                        manifest[index] = new_entry;
+                    }
+                    Err(e) => {
+                        eprintln!("Repair failed for {}: {}", entry.title, e);
+                    }
+                }
+            }
+            Err(_) => {
+                // Nothing fits: park the file so the game can start without it
+                if current_path.exists() {
+                    let parked = dir.join("incompatible");
+                    std::fs::create_dir_all(&parked).ok();
+                    std::fs::rename(&current_path, parked.join(&entry.filename)).ok();
+                }
+                incompatible.push(entry.title.clone());
+            }
+        }
+    }
+
+    // Drop the parked ones from the manifest so update checks skip them
+    let parked: std::collections::HashSet<String> = incompatible.iter().cloned().collect();
+    manifest.retain(|m| !parked.contains(&m.title));
+
+    save_manifest(&inst, &manifest)?;
+
+    emit_progress(app, InstallProgress {
+        stage: "done".into(),
+        current: 1,
+        total: 1,
+        file: String::new(),
+    });
+
+    Ok(RepairReport {
+        replaced,
+        incompatible,
+        checked: total as u32,
+    })
+}

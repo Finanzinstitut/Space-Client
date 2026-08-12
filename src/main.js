@@ -1353,6 +1353,34 @@ async function updateOne(pending, btn) {
 
 $("btn-check-mod-updates").addEventListener("click", checkModUpdates);
 
+$("btn-repair-mods").addEventListener("click", async () => {
+  const inst = currentModsInstance();
+  if (!inst) return;
+  $("btn-repair-mods").disabled = true;
+  setStatus("mods-status", t("repair_running"));
+  try {
+    const report = await invoke("repair_instance_mods", { instanceId: inst.id });
+    const clean = report.replaced.length === 0 && report.incompatible.length === 0;
+    setStatus(
+      "mods-status",
+      clean
+        ? t("repair_clean", { checked: report.checked })
+        : t("repair_done", {
+            checked: report.checked,
+            replaced: report.replaced.length,
+            incompatible: report.incompatible.length,
+          }),
+      report.incompatible.length > 0 ? "error" : "success"
+    );
+    availableUpdates = [];
+    await loadInstalledMods();
+  } catch (e) {
+    setStatus("mods-status", String(e), "error");
+  } finally {
+    $("btn-repair-mods").disabled = false;
+  }
+});
+
 $("btn-update-all-mods").addEventListener("click", async () => {
   const inst = currentModsInstance();
   if (!inst) return;
