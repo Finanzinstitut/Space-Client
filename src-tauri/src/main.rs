@@ -9,6 +9,7 @@ use launcher::loader::{self, LoaderVersion};
 use launcher::manifest::{fetch_version_manifest, VersionEntry};
 use launcher::modpack::{self, ImportResult};
 use launcher::mods::{self, InstalledMod, ModHit, ModUpdate, ProjectVersion};
+use launcher::skin::{self, SkinProfile};
 use launcher::update::{self, UpdateInfo};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -120,6 +121,28 @@ async fn complete_login(info: DeviceCodeInfo) -> Result<AccountInfo, String> {
         uuid: account.uuid,
         offline: account.offline,
     })
+}
+
+// ---------------- skins & capes ----------------
+
+#[tauri::command]
+async fn get_skin_profile() -> Result<SkinProfile, String> {
+    skin::get_profile().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn upload_skin(path: String, variant: String) -> Result<SkinProfile, String> {
+    skin::upload_skin(path, variant).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_skin_variant(variant: String) -> Result<SkinProfile, String> {
+    skin::set_variant(variant).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_cape(cape_id: String) -> Result<SkinProfile, String> {
+    skin::set_cape(cape_id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -521,6 +544,10 @@ fn main() {
             complete_login,
             logout,
             login_offline,
+            get_skin_profile,
+            upload_skin,
+            set_skin_variant,
+            set_cape,
             list_versions,
             list_loaders,
             list_instances,

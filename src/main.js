@@ -174,6 +174,142 @@ async function launchInstance(inst) {
 
 
 
+
+// ---------------- skin & capes ----------------
+let skinProfile = null;
+
+function renderSkin() {
+  const warning = $("skin-warning");
+  const panel = $("skin-panel");
+
+  if (!account) {
+    warning.textContent = t("signin_required");
+    warning.classList.remove("hidden");
+    panel.classList.add("hidden");
+    return;
+  }
+  if (account.offline) {
+    warning.textContent = t("skin_needs_ms");
+    warning.classList.remove("hidden");
+    panel.classList.add("hidden");
+    return;
+  }
+  warning.classList.add("hidden");
+  panel.classList.remove("hidden");
+
+  if (!skinProfile) return;
+
+  // Crafatar renders a full body from the account's UUID, which saves
+  // parsing the skin PNG ourselves just to show a preview.
+  $("skin-body").src =
+    `https://crafatar.com/renders/body/${skinProfile.uuid}?size=180&overlay&t=${Date.now()}`;
+  $("skin-name").textContent = skinProfile.username;
+
+  const isSlim = (skinProfile.variant || "").toUpperCase() === "SLIM";
+  $("model-classic").classList.toggle("active", !isSlim);
+  $("model-slim").classList.toggle("active", isSlim);
+
+  renderCapes();
+}
+
+function renderCapes() {
+  const list = $("cape-list");
+  list.innerHTML = "";
+
+  const none = document.createElement("button");
+  none.className = "cape-item" + (skinProfile.capes.every((c) => !c.active) ? " active" : "");
+  none.innerHTML = `<div class="cape-thumb empty"></div><span></span>`;
+  none.querySelector("span").textContent = t("cape_none");
+  none.onclick = () => applyCape("");
+  list.appendChild(none);
+
+  if (skinProfile.capes.length === 0) {
+    const note = document.createElement("p");
+    note.className = "empty-note";
+    note.textContent = t("skin_no_capes");
+    list.appendChild(note);
+    return;
+  }
+
+  skinProfile.capes.forEach((cape) => {
+    const item = document.createElement("button");
+    item.className = "cape-item" + (cape.active ? " active" : "");
+
+    const thumb = document.createElement("div");
+    thumb.className = "cape-thumb";
+    if (cape.url) thumb.style.backgroundImage = `url("${cape.url}")`;
+
+    const label = document.createElement("span");
+    label.textContent = cape.alias;
+
+    item.appendChild(thumb);
+    item.appendChild(label);
+    item.onclick = () => applyCape(cape.id);
+    list.appendChild(item);
+  });
+}
+
+async function loadSkinProfile() {
+  if (!account || account.offline) {
+    renderSkin();
+    return;
+  }
+  setStatus("skin-status", t("skin_loading"));
+  try {
+    skinProfile = await invoke("get_skin_profile");
+    setStatus("skin-status", "");
+    renderSkin();
+  } catch (e) {
+    setStatus("skin-status", String(e), "error");
+  }
+}
+
+async function uploadSkinFile(path) {
+  const fileName = path.split(/[\\/]/).pop();
+  const variant = $("model-slim").classList.contains("active") ? "slim" : "classic";
+  setStatus("skin-status", t("skin_uploading", { name: fileName }));
+  try {
+    skinProfile = await invoke("upload_skin", { path, variant });
+    setStatus("skin-status", t("skin_uploaded"), "success");
+    renderSkin();
+  } catch (e) {
+    setStatus("skin-status", String(e), "error");
+  }
+}
+
+async function applyVariant(variant) {
+  setStatus("skin-status", "");
+  try {
+    skinProfile = await invoke("set_skin_variant", { variant });
+    setStatus("skin-status", t("skin_model_changed"), "success");
+    renderSkin();
+  } catch (e) {
+    setStatus("skin-status", String(e), "error");
+  }
+}
+
+async function applyCape(capeId) {
+  setStatus("skin-status", "");
+  try {
+    skinProfile = await invoke("set_cape", { capeId });
+    setStatus("skin-status", t("skin_cape_changed"), "success");
+    renderSkin();
+  } catch (e) {
+    setStatus("skin-status", String(e), "error");
+  }
+}
+
+$("model-classic").addEventListener("click", () => applyVariant("classic"));
+$("model-slim").addEventListener("click", () => applyVariant("slim"));
+
+$("skin-drop-zone").addEventListener("click", async () => {
+  const selected = await open({
+    multiple: false,
+    filters: [{ name: "Skin", extensions: ["png"] }],
+  });
+  if (selected) uploadSkinFile(selected);
+});
+
 // ---------------- live console ----------------
 let consoleInstanceId = null;
 const MAX_CONSOLE_LINES = 2000;
@@ -293,15 +429,26 @@ $("btn-import-modpack").addEventListener("click", async () => {
 
       if (type === "over" || type === "enter") {
         zone.classList.add("active");
+        $("skin-drop-zone").classList.add("active");
         return;
       }
       if (type === "leave") {
         zone.classList.remove("active");
+        $("skin-drop-zone").classList.remove("active");
         return;
       }
       if (type === "drop") {
         zone.classList.remove("active");
+        $("skin-drop-zone").classList.remove("active");
         const paths = event.payload.paths || [];
+        // A dropped .png is a skin; anything archive-shaped is a modpack.
+        const skin = paths.find((p) => p.toLowerCase().endsWith(".png"));
+        if (skin) {
+          showView("skin");
+          uploadSkinFile(skin);
+          return;
+        }
+
         const pack = paths.find((p) =>
           PACK_EXTENSIONS.some((ext) => p.toLowerCase().endsWith("." + ext))
         );
@@ -457,12 +604,36 @@ function renderVersionOptions() {
   }
 }
 
-$("new-snapshots").addEventListener("change", renderVersionOptions);
+$("new-snapshots").addEventListener("change", () => {
+  renderVersionOptions();
+  updateHudCompatNote();
+});
+
+
+/// The HUD mod is a Fabric mod built against 26.2 only, so any other
+/// combination silently gets an instance without it. Say so up front.
+const HUD_MC_VERSION = "26.2";
+const HUD_LOADERS = ["fabric", "quilt"];
+
+function updateHudCompatNote() {
+  const note = $("hud-compat-note");
+  const version = $("new-version").value;
+  const loader = $("new-loader").value;
+  if (!version || !loader) {
+    note.classList.add("hidden");
+    return;
+  }
+
+  const supported = version === HUD_MC_VERSION && HUD_LOADERS.includes(loader);
+  note.textContent = supported ? t("hud_supported") : t("hud_unsupported");
+  note.className = "compat-note " + (supported ? "ok" : "warn");
+}
 
 async function refreshNewLoaderVersions() {
   const loader = $("new-loader").value;
   toggleLoaderVersionField("new-loader-version-field", loader);
   await fillLoaderVersions("new-loader-version", loader, $("new-version").value);
+  updateHudCompatNote();
 }
 
 $("new-loader").addEventListener("change", refreshNewLoaderVersions);
@@ -559,6 +730,7 @@ $("btn-signin").addEventListener("click", async () => {
     account = await invoke("complete_login", { info: pendingLogin });
     $("login-flow").classList.add("hidden");
     renderAccount();
+    loadSkinProfile();
     setStatus("account-status", t("login_success"), "success");
   } catch (e) {
     $("login-flow").classList.add("hidden");
@@ -598,7 +770,9 @@ $("btn-copy-code").addEventListener("click", async () => {
 $("btn-signout").addEventListener("click", async () => {
   await invoke("logout");
   account = null;
+  skinProfile = null;
   renderAccount();
+  renderSkin();
 });
 
 
@@ -1142,6 +1316,7 @@ async function init() {
 
   account = await invoke("get_account");
   renderAccount();
+  loadSkinProfile();
 
   await refreshInstances();
 

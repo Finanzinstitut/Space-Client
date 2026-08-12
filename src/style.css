@@ -560,3 +560,70 @@ input.grow { flex: 1; }
 .console-output::-webkit-scrollbar-track { background: #ffffff05; }
 .console-output::-webkit-scrollbar-thumb { background: #ffffff1a; border-radius: 5px; }
 .console-output::-webkit-scrollbar-thumb:hover { background: #ffffff2e; }
+
+/* ---------- HUD mod compatibility note ---------- */
+.compat-note {
+  font-size: 12px; line-height: 1.45;
+  padding: 10px 14px; border-radius: 10px; margin-bottom: 16px;
+  border: 1px solid transparent;
+}
+.compat-note.hidden { display: none; }
+.compat-note.warn {
+  background: #3a1220; border-color: #6b2338; color: #ff9aae;
+}
+.compat-note.ok {
+  background: #10251a; border-color: #2c6b3f; color: #8ff0b5;
+}
+
+/* ---------- skin manager ---------- */
+.skin-layout { display: flex; gap: 18px; align-items: flex-start; max-width: 900px; }
+.skin-layout.hidden { display: none; }
+.skin-preview-card { flex-shrink: 0; width: 240px; text-align: center; }
+
+.skin-preview {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  height: 220px; margin: 14px 0;
+  background: radial-gradient(circle at 50% 40%, #1c1550, #0a0820 70%);
+  border: 1px solid var(--border); border-radius: 12px;
+}
+.skin-preview img {
+  max-height: 190px; image-rendering: pixelated;
+}
+.cape-preview { position: absolute; right: 14px; bottom: 14px; width: 40px; }
+.cape-preview.hidden { display: none; }
+
+.skin-name { font-size: 15px; font-weight: 600; color: var(--accent-2); }
+
+.drop-zone.skin-drop { cursor: pointer; margin-bottom: 20px; }
+.drop-zone.skin-drop:hover { border-color: var(--accent); color: var(--text); }
+
+.cape-list {
+  display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px;
+}
+.cape-item {
+  all: unset; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  width: 74px; padding: 10px 6px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: #ffffff06; transition: all .15s;
+}
+.cape-item:hover { border-color: var(--accent); }
+.cape-item.active {
+  border-color: var(--accent-2);
+  background: #38e0ff14;
+  box-shadow: 0 0 12px #38e0ff22;
+}
+.cape-thumb {
+  width: 42px; height: 54px; border-radius: 4px;
+  background-color: #100d2a;
+  background-size: 320% auto;      /* crop the cape sheet to its front face */
+  background-position: 8% 12%;
+  image-rendering: pixelated;
+  border: 1px solid var(--border);
+}
+.cape-thumb.empty {
+  background: repeating-linear-gradient(45deg, #1a1640, #1a1640 6px, #241f57 6px, #241f57 12px);
+}
+.cape-item span { font-size: 10px; color: var(--text-dim); text-align: center; line-height: 1.2; }
+.cape-item.active span { color: var(--accent-2); }

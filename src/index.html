@@ -19,6 +19,7 @@
       <nav>
         <button class="nav-item active" data-view="instances">🚀 <span data-i18n="nav_instances"></span></button>
         <button class="nav-item" data-view="mods">🛰️ <span data-i18n="nav_mods"></span></button>
+        <button class="nav-item" data-view="skin">🧍 <span data-i18n="nav_skin"></span></button>
         <button class="nav-item" data-view="account">👤 <span data-i18n="nav_account"></span></button>
         <button class="nav-item" data-view="settings">⚙️ <span data-i18n="nav_settings"></span></button>
       </nav>
@@ -104,6 +105,47 @@
           </div>
 
           <div id="mods-status" class="status-line"></div>
+        </div>
+      </section>
+
+      <!-- SKIN -->
+      <section id="view-skin" class="view">
+        <h1 data-i18n="skin_title"></h1>
+        <p class="subtitle" data-i18n="skin_sub"></p>
+
+        <div id="skin-warning" class="warning-box hidden"></div>
+
+        <div id="skin-panel" class="skin-layout">
+          <div class="card skin-preview-card">
+            <label data-i18n="skin_current"></label>
+            <div class="skin-preview">
+              <img id="skin-body" alt="" />
+              <img id="cape-preview" alt="" class="cape-preview hidden" />
+            </div>
+            <div id="skin-name" class="skin-name"></div>
+          </div>
+
+          <div class="card grow">
+            <div id="skin-drop-zone" class="drop-zone skin-drop">
+              <span>🧍</span>
+              <span data-i18n="skin_drop"></span>
+            </div>
+
+            <div class="field grow">
+              <label data-i18n="skin_model"></label>
+              <div class="row">
+                <button class="type-btn" id="model-classic" data-variant="classic" data-i18n="model_classic"></button>
+                <button class="type-btn" id="model-slim" data-variant="slim" data-i18n="model_slim"></button>
+              </div>
+            </div>
+
+            <div class="field grow">
+              <label data-i18n="skin_capes"></label>
+              <div id="cape-list" class="cape-list"></div>
+            </div>
+
+            <div id="skin-status" class="status-line"></div>
+          </div>
         </div>
       </section>
 
@@ -245,6 +287,8 @@
           <option value="neoforge">NeoForge</option>
         </select>
       </div>
+
+      <div id="hud-compat-note" class="compat-note hidden"></div>
 
       <div class="field grow" id="new-loader-version-field">
         <label data-i18n="field_loader_version"></label>

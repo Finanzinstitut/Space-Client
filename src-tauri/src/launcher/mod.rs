@@ -10,4 +10,5 @@ pub mod manifest;
 pub mod modpack;
 pub mod mods;
 pub mod progress;
+pub mod skin;
 pub mod update;
