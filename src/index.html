@@ -39,9 +39,19 @@
             <p class="subtitle" data-i18n="instances_sub"></p>
           </div>
           <div class="head-actions">
+            <button id="btn-running" class="btn secondary hidden">
+              <span class="run-dot"></span>
+              <span id="btn-running-label"></span>
+            </button>
             <button id="btn-import-modpack" class="btn secondary" data-i18n="btn_import"></button>
             <button id="btn-new-instance" class="btn primary" data-i18n="btn_new_instance"></button>
           </div>
+        </div>
+
+        <!-- Only rendered while something is actually running -->
+        <div id="running-strip" class="running-strip hidden">
+          <div class="running-head" data-i18n="running_title"></div>
+          <div id="running-list" class="running-list"></div>
         </div>
 
         <div id="drop-zone" class="drop-zone">
@@ -311,6 +321,14 @@
           <button id="btn-pick-instance-path" class="btn secondary small" data-i18n="btn_choose"></button>
         </div>
         <p class="hint" data-i18n="location_hint"></p>
+      </div>
+
+      <div class="field grow">
+        <label class="check-row">
+          <input id="new-cosmetica" type="checkbox" checked />
+          <span data-i18n="field_cosmetica"></span>
+        </label>
+        <p class="hint" data-i18n="cosmetica_hint"></p>
       </div>
 
       <div class="row actions">

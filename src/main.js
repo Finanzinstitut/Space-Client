@@ -140,6 +140,7 @@ async function refreshInstances() {
   instances = await invoke("list_instances");
   renderInstances();
   renderModsInstanceOptions();
+  renderRunning();
 }
 
 async function installInstance(inst) {
@@ -439,6 +440,103 @@ $("skin-drop-zone").addEventListener("click", async () => {
   });
   if (selected) uploadSkinFile(selected);
 });
+
+/**
+ * Installs Cosmetica into a freshly created instance.
+ *
+ * Goes through the same install_mod path as any other mod, so the right build
+ * for the instance's version and loader is chosen and dependencies come along
+ * on their own - rather than hardcoding a download url that would rot the
+ * moment a new Minecraft version lands.
+ *
+ * Failure is reported and swallowed. The instance is already made and playable
+ * by this point, so a cosmetics mod that could not be fetched is a note, not a
+ * reason to leave the player with a broken creation.
+ */
+async function installCosmetica(inst) {
+  try {
+    setStatus("global-status", t("installing_cosmetica"));
+    await invoke("install_mod", {
+      instanceId: inst.id,
+      projectId: "cosmetica",
+      projectType: "mod",
+    });
+    setStatus("global-status", t("cosmetica_done"), "ok");
+  } catch (e) {
+    setStatus("global-status", t("cosmetica_failed") + " " + String(e), "error");
+  }
+}
+
+// ---------------- running instances ----------------
+
+/** Ids currently running, so the strip can be drawn without asking per frame. */
+let runningIds = new Set();
+
+/**
+ * Refreshes which instances are running and redraws the strip.
+ *
+ * Polled rather than pushed: the backend already tracks children and exposes
+ * is_running, and a poll every couple of seconds is cheaper to get right than
+ * a new event channel for something that changes a handful of times a session.
+ */
+async function refreshRunning() {
+  const found = new Set();
+  for (const inst of instances) {
+    try {
+      if (await invoke("is_running", { id: inst.id })) found.add(inst.id);
+    } catch {
+      // An instance that cannot be asked is treated as stopped
+    }
+  }
+  runningIds = found;
+  renderRunning();
+}
+
+function renderRunning() {
+  const strip = $("running-strip");
+  const list = $("running-list");
+  const button = $("btn-running");
+
+  const active = instances.filter((i) => runningIds.has(i.id));
+
+  button.classList.toggle("hidden", active.length === 0);
+  $("btn-running-label").textContent =
+    t("running_button") + " (" + active.length + ")";
+
+  if (active.length === 0) {
+    strip.classList.add("hidden");
+    list.innerHTML = "";
+    return;
+  }
+
+  list.innerHTML = "";
+  for (const inst of active) {
+    const row = document.createElement("button");
+    row.className = "running-item";
+    row.innerHTML =
+      '<span class="run-dot"></span>' +
+      '<span class="running-name"></span>' +
+      '<span class="running-version"></span>' +
+      '<span class="running-open" data-i18n="running_open"></span>';
+    row.querySelector(".running-name").textContent = inst.name;
+    row.querySelector(".running-version").textContent =
+      inst.mc_version + " " + inst.loader;
+    row.querySelector(".running-open").textContent = t("running_open");
+    row.addEventListener("click", () => openConsole(inst));
+    list.appendChild(row);
+  }
+}
+
+$("btn-running").addEventListener("click", () => {
+  const strip = $("running-strip");
+  strip.classList.toggle("hidden");
+});
+
+// A game can also exit on its own, so the strip is polled rather than only
+// refreshed when the launcher does something.
+setInterval(() => {
+  refreshRunning().catch(() => {});
+}, 3000);
 
 // ---------------- live console ----------------
 let consoleInstanceId = null;
@@ -774,6 +872,7 @@ $("btn-new-instance").addEventListener("click", () => {
   $("new-path").value = "";
   $("new-ram").value = config?.max_ram_mb ?? 4096;
   $("new-ram-value").textContent = $("new-ram").value + " MB";
+  $("new-cosmetica").checked = true;
   setStatus("create-status", "");
   $("modal-backdrop").classList.remove("hidden");
   refreshNewLoaderVersions();
@@ -807,9 +906,19 @@ $("btn-confirm-create").addEventListener("click", async () => {
       ramMb: parseInt($("new-ram").value, 10),
       parentPath: $("new-path").value,
     });
+    const wantsCosmetica = $("new-cosmetica").checked;
+
     $("modal-backdrop").classList.add("hidden");
     await refreshInstances();
     await installInstance(inst);
+
+    // After the instance itself, so the mods folder exists and the loader is
+    // known. Vanilla instances are skipped rather than failed: there is nowhere
+    // for a mod to go, and refusing to create the instance over a checkbox
+    // would be a poor trade.
+    if (wantsCosmetica && $("new-loader").value !== "vanilla") {
+      await installCosmetica(inst);
+    }
   } catch (e) {
     setStatus("create-status", String(e), "error");
   }

@@ -649,3 +649,98 @@ input.grow { flex: 1; }
   display: flex; align-items: center; gap: 8px;
 }
 .account-actions { display: flex; gap: 6px; align-items: center; }
+
+/* ---------- running instances ---------- */
+
+/*
+ * The strip only exists while something is running, so it is styled to read as
+ * a temporary state rather than as furniture: brighter than the surrounding
+ * cards, and gone entirely when nothing is playing.
+ */
+.running-strip {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border: 1px solid rgba(140, 120, 255, 0.35);
+  border-radius: 12px;
+  background: rgba(60, 45, 140, 0.16);
+}
+
+.running-head {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  margin-bottom: 10px;
+}
+
+.running-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.running-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.running-item:hover {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(160, 140, 255, 0.5);
+}
+
+.running-name { font-weight: 600; }
+
+.running-version {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+/* Pushed right, so the action sits away from the name at any width */
+.running-open {
+  margin-left: auto;
+  font-size: 12px;
+  color: #b9a9ff;
+}
+
+/* A running game is the one thing here worth a moving indicator */
+.run-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #57e08a;
+  box-shadow: 0 0 0 0 rgba(87, 224, 138, 0.6);
+  animation: run-pulse 1.8s ease-out infinite;
+  flex: none;
+}
+
+@keyframes run-pulse {
+  70%  { box-shadow: 0 0 0 7px rgba(87, 224, 138, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(87, 224, 138, 0); }
+}
+
+#btn-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+}
+
+.check-row input { width: auto; margin: 0; }
