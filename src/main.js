@@ -496,12 +496,19 @@ function renderRunning() {
   const strip = $("running-strip");
   const list = $("running-list");
   const button = $("btn-running");
+  const label = $("btn-running-label");
+
+  // refreshInstances calls this, and refreshInstances is on the path to
+  // installing anything. Missing markup must degrade to no strip, not to a
+  // broken launcher.
+  if (!strip || !list || !button) return;
 
   const active = instances.filter((i) => runningIds.has(i.id));
 
   button.classList.toggle("hidden", active.length === 0);
-  $("btn-running-label").textContent =
-    t("running_button") + " (" + active.length + ")";
+  if (label) {
+    label.textContent = t("running_button") + " (" + active.length + ")";
+  }
 
   if (active.length === 0) {
     strip.classList.add("hidden");
@@ -527,15 +534,26 @@ function renderRunning() {
   }
 }
 
-$("btn-running").addEventListener("click", () => {
-  const strip = $("running-strip");
-  strip.classList.toggle("hidden");
-});
+// Guarded because this runs the moment the file loads. An unguarded call on a
+// missing element throws here, and a throw at the top level takes the whole
+// script with it - which would stop instances installing, mods downloading and
+// everything else, for the sake of a button.
+const runningButton = $("btn-running");
+if (runningButton) {
+  runningButton.addEventListener("click", () => {
+    const strip = $("running-strip");
+    if (strip) strip.classList.toggle("hidden");
+  });
+}
 
 // A game can also exit on its own, so the strip is polled rather than only
 // refreshed when the launcher does something.
 setInterval(() => {
-  refreshRunning().catch(() => {});
+  try {
+    refreshRunning().catch(() => {});
+  } catch {
+    // Never let the poll be the reason something else stops working
+  }
 }, 3000);
 
 // ---------------- live console ----------------
@@ -872,7 +890,8 @@ $("btn-new-instance").addEventListener("click", () => {
   $("new-path").value = "";
   $("new-ram").value = config?.max_ram_mb ?? 4096;
   $("new-ram-value").textContent = $("new-ram").value + " MB";
-  $("new-cosmetica").checked = true;
+  const cosmeticaBox = $("new-cosmetica");
+  if (cosmeticaBox) cosmeticaBox.checked = true;
   setStatus("create-status", "");
   $("modal-backdrop").classList.remove("hidden");
   refreshNewLoaderVersions();
@@ -906,7 +925,8 @@ $("btn-confirm-create").addEventListener("click", async () => {
       ramMb: parseInt($("new-ram").value, 10),
       parentPath: $("new-path").value,
     });
-    const wantsCosmetica = $("new-cosmetica").checked;
+    const cosmeticaBox = $("new-cosmetica");
+    const wantsCosmetica = cosmeticaBox ? cosmeticaBox.checked : false;
 
     $("modal-backdrop").classList.add("hidden");
     await refreshInstances();
