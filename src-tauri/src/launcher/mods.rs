@@ -54,10 +54,43 @@ pub struct InstalledMod {
     /// "mod" | "resourcepack" | "shader"
     #[serde(default = "default_type")]
     pub project_type: String,
+    /// Modrinth project icon. Cached in the manifest so the installed list does
+    /// not have to hit the API again on every render.
+    #[serde(default)]
+    pub icon_url: String,
+    /// Derived from disk, never trusted from the manifest: a file is disabled
+    /// when it sits next to its slot as `<filename>.disabled`.
+    #[serde(default = "default_true", skip_deserializing)]
+    pub enabled: bool,
 }
 
 fn default_type() -> String {
     "mod".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Suffix used to park a file so the loader ignores it without deleting it.
+const DISABLED_SUFFIX: &str = ".disabled";
+
+/// The name a file has on disk right now, enabled or not.
+fn resolve_on_disk(dir: &std::path::Path, filename: &str) -> Option<(PathBuf, bool)> {
+    let enabled = dir.join(filename);
+    if enabled.exists() {
+        return Some((enabled, true));
+    }
+    let disabled = dir.join(format!("{}{}", filename, DISABLED_SUFFIX));
+    if disabled.exists() {
+        return Some((disabled, false));
+    }
+    None
+}
+
+/// Strips the marker so the manifest always stores the plain file name.
+fn base_filename(name: &str) -> String {
+    name.strip_suffix(DISABLED_SUFFIX).unwrap_or(name).to_string()
 }
 
 fn manifest_path(inst: &instance::Instance) -> PathBuf {
@@ -341,11 +374,200 @@ async fn download_version(
             .unwrap_or_default()
             .to_string(),
         project_type: project_type.to_string(),
+        icon_url: String::new(),
+        enabled: true,
     })
 }
 
-/// Installs the newest suitable version of a project, plus required
-/// dependencies (mods only - packs and shaders have none).
+/// Asks Modrinth in bulk for the icon of each project. Used to backfill entries
+/// that were written before icons were recorded, and everything that arrived
+/// through a modpack import.
+pub async fn fetch_project_icons(
+    ids: &[String],
+) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    let Ok(client) = http() else { return out };
+
+    for chunk in ids.chunks(50) {
+        let unique: Vec<&String> = {
+            let mut seen = HashSet::new();
+            chunk.iter().filter(|id| seen.insert((*id).clone())).collect()
+        };
+        let Ok(ids_json) = serde_json::to_string(&unique) else { continue };
+
+        let resp = client
+            .get(format!("{}/projects", MODRINTH_API))
+            .query(&[("ids", ids_json.as_str())])
+            .send()
+            .await;
+        let Ok(resp) = resp else { continue };
+        let Ok(json) = resp.json::<serde_json::Value>().await else { continue };
+
+        if let Some(arr) = json.as_array() {
+            for p in arr {
+                let id = p.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+                let icon = p.get("icon_url").and_then(|v| v.as_str()).unwrap_or_default();
+                if !id.is_empty() && !icon.is_empty() {
+                    out.insert(id.to_string(), icon.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Turns one dependency entry into a project id.
+///
+/// Modrinth is inconsistent here: a lot of projects pin a dependency by
+/// `version_id` and leave `project_id` null. The old code only read
+/// `project_id`, which is exactly why Litematica came in without MaLiLib.
+async fn dep_project_id(dep: &serde_json::Value) -> Option<String> {
+    if let Some(pid) = dep.get("project_id").and_then(|v| v.as_str()) {
+        if !pid.is_empty() {
+            return Some(pid.to_string());
+        }
+    }
+    let vid = dep.get("version_id").and_then(|v| v.as_str())?;
+    if vid.is_empty() {
+        return None;
+    }
+    let version = fetch_version_by_id(vid).await.ok()?;
+    version
+        .get("project_id")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
+/// One node of the install walk.
+struct Task {
+    project_id: String,
+    /// Set when the user picked an exact version; None means "newest that fits".
+    pinned: Option<serde_json::Value>,
+    /// Roots keep the caller's project type. Dependencies are always mods -
+    /// nothing depends on a resource pack.
+    is_root: bool,
+}
+
+/// Queues every *required* dependency of a version.
+async fn queue_dependencies(
+    version: &serde_json::Value,
+    queue: &mut std::collections::VecDeque<Task>,
+) {
+    let Some(deps) = version.get("dependencies").and_then(|d| d.as_array()) else {
+        return;
+    };
+    for dep in deps {
+        if dep.get("dependency_type").and_then(|v| v.as_str()) != Some("required") {
+            continue;
+        }
+        if let Some(pid) = dep_project_id(dep).await {
+            queue.push_back(Task { project_id: pid, pinned: None, is_root: false });
+        }
+    }
+}
+
+/// Installs a set of projects together with the full transitive closure of
+/// their required dependencies.
+///
+/// This is the single place dependency resolution happens. Before, three code
+/// paths each had their own half-implementation: `install_mod` walked the graph
+/// but only via `project_id`, `install_specific_version` went exactly one level
+/// deep, and modpack imports did not resolve dependencies at all. Any project
+/// that arrived through one of the latter two ended up without its libraries.
+async fn install_graph(
+    app: &AppHandle,
+    inst: &instance::Instance,
+    manifest: &mut Vec<InstalledMod>,
+    seeds: Vec<Task>,
+    project_type: &str,
+) -> anyhow::Result<(Vec<InstalledMod>, Vec<String>)> {
+    let mut installed_now: Vec<InstalledMod> = Vec::new();
+    let mut missing: Vec<String> = Vec::new();
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut queue: std::collections::VecDeque<Task> = seeds.into_iter().collect();
+
+    while let Some(task) = queue.pop_front() {
+        let pid = task.project_id;
+        if pid.is_empty() || !visited.insert(pid.clone()) {
+            continue;
+        }
+        let ptype = if task.is_root { project_type } else { "mod" };
+
+        let existing = manifest.iter().find(|m| m.project_id == pid).cloned();
+
+        // Already there and the file really is on disk: do not download it
+        // again, but still walk its dependencies. Skipping the whole entry -
+        // as the old code did - meant a mod installed earlier never had its
+        // libraries checked.
+        if task.pinned.is_none() {
+            if let Some(entry) = &existing {
+                let dir = inst.content_dir(&entry.project_type);
+                if resolve_on_disk(&dir, &entry.filename).is_some() {
+                    if entry.project_type == "mod" && !entry.version_id.is_empty() {
+                        if let Ok(v) = fetch_version_by_id(&entry.version_id).await {
+                            queue_dependencies(&v, &mut queue).await;
+                        }
+                    }
+                    continue;
+                }
+            }
+        }
+
+        let version = match task.pinned {
+            Some(v) => v,
+            None => match best_version(&pid, &inst.mc_version, &inst.loader, ptype).await {
+                Ok(v) => v,
+                Err(e) => {
+                    // A dependency with no matching build must not sink the
+                    // whole install - it is reported instead.
+                    eprintln!("No version for {}: {}", pid, e);
+                    missing.push(pid.clone());
+                    continue;
+                }
+            },
+        };
+
+        emit_progress(app, InstallProgress {
+            stage: "mods".into(),
+            current: installed_now.len() as u64,
+            total: (installed_now.len() + queue.len() + 1) as u64,
+            file: version.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        });
+
+        let entry = match download_version(inst, &version, &pid, ptype, "").await {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("Download failed for {}: {}", pid, e);
+                missing.push(pid.clone());
+                continue;
+            }
+        };
+
+        // Replacing an entry: drop the old file, in either state.
+        if let Some(old) = existing {
+            let dir = inst.content_dir(&old.project_type);
+            if old.filename != entry.filename {
+                if let Some((path, _)) = resolve_on_disk(&dir, &old.filename) {
+                    std::fs::remove_file(path).ok();
+                }
+            }
+            manifest.retain(|m| m.project_id != pid);
+        }
+
+        manifest.push(entry.clone());
+        installed_now.push(entry);
+
+        if ptype == "mod" {
+            queue_dependencies(&version, &mut queue).await;
+        }
+    }
+
+    Ok((installed_now, missing))
+}
+
+/// Installs the newest suitable version of a project, plus every required
+/// dependency underneath it.
 pub async fn install_mod(
     app: &AppHandle,
     instance_id: String,
@@ -358,55 +580,9 @@ pub async fn install_mod(
     }
 
     let mut manifest = load_manifest(&inst);
-    let mut installed_now: Vec<InstalledMod> = Vec::new();
-    let mut visited: HashSet<String> = HashSet::new();
-    let mut queue: Vec<String> = vec![project_id];
-
-    while let Some(pid) = queue.pop() {
-        if !visited.insert(pid.clone()) {
-            continue;
-        }
-        if manifest.iter().any(|m| m.project_id == pid) {
-            continue;
-        }
-
-        let version = match best_version(&pid, &inst.mc_version, &inst.loader, &project_type).await {
-            Ok(v) => v,
-            Err(e) => {
-                // A missing optional dependency must not abort the whole install
-                eprintln!("Skipping {}: {}", pid, e);
-                continue;
-            }
-        };
-
-        emit_progress(app, InstallProgress {
-            stage: "mods".into(),
-            current: installed_now.len() as u64,
-            total: (installed_now.len() + queue.len() + 1) as u64,
-            file: version
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-        });
-
-        let entry = download_version(&inst, &version, &pid, &project_type, "").await?;
-        manifest.push(entry.clone());
-        installed_now.push(entry);
-
-        if project_type == "mod" {
-            if let Some(deps) = version.get("dependencies").and_then(|d| d.as_array()) {
-                for dep in deps {
-                    if dep.get("dependency_type").and_then(|v| v.as_str()) != Some("required") {
-                        continue;
-                    }
-                    if let Some(dep_id) = dep.get("project_id").and_then(|v| v.as_str()) {
-                        queue.push(dep_id.to_string());
-                    }
-                }
-            }
-        }
-    }
+    let seeds = vec![Task { project_id, pinned: None, is_root: true }];
+    let (installed_now, missing) =
+        install_graph(app, &inst, &mut manifest, seeds, &project_type).await?;
 
     save_manifest(&inst, &manifest)?;
     emit_progress(app, InstallProgress {
@@ -415,10 +591,19 @@ pub async fn install_mod(
         total: 1,
         file: String::new(),
     });
+
+    if installed_now.is_empty() && !missing.is_empty() {
+        anyhow::bail!(
+            "Nothing available for Minecraft {} with {}",
+            inst.mc_version,
+            inst.loader
+        );
+    }
     Ok(installed_now)
 }
 
-/// Installs one specific version the user picked from the version list.
+/// Installs one specific version the user picked from the version list, and
+/// resolves its dependencies the same way as any other install.
 pub async fn install_specific_version(
     app: &AppHandle,
     instance_id: String,
@@ -429,53 +614,14 @@ pub async fn install_specific_version(
     let inst = instance::get(&instance_id).ok_or_else(|| anyhow::anyhow!("Instance not found"))?;
     let version = fetch_version_by_id(&version_id).await?;
 
-    emit_progress(app, InstallProgress {
-        stage: "mods".into(),
-        current: 0,
-        total: 1,
-        file: version.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-    });
-
     let mut manifest = load_manifest(&inst);
-
-    // Replacing an existing entry: drop the old file first.
-    if let Some(pos) = manifest.iter().position(|m| m.project_id == project_id) {
-        let old = manifest.remove(pos);
-        let old_path = inst.content_dir(&old.project_type).join(&old.filename);
-        if old_path.exists() {
-            std::fs::remove_file(old_path).ok();
-        }
-    }
-
-    let entry = download_version(&inst, &version, &project_id, &project_type, "").await?;
-    manifest.push(entry.clone());
-
-    // Required dependencies of the chosen version still need to be present.
-    if project_type == "mod" {
-        if let Some(deps) = version.get("dependencies").and_then(|d| d.as_array()) {
-            for dep in deps {
-                if dep.get("dependency_type").and_then(|v| v.as_str()) != Some("required") {
-                    continue;
-                }
-                let dep_id = match dep.get("project_id").and_then(|v| v.as_str()) {
-                    Some(d) => d.to_string(),
-                    None => continue,
-                };
-                if manifest.iter().any(|m| m.project_id == dep_id) {
-                    continue;
-                }
-                if let Ok(dep_version) =
-                    best_version(&dep_id, &inst.mc_version, &inst.loader, "mod").await
-                {
-                    if let Ok(dep_entry) =
-                        download_version(&inst, &dep_version, &dep_id, "mod", "").await
-                    {
-                        manifest.push(dep_entry);
-                    }
-                }
-            }
-        }
-    }
+    let seeds = vec![Task {
+        project_id: project_id.clone(),
+        pinned: Some(version),
+        is_root: true,
+    }];
+    let (installed_now, _) =
+        install_graph(app, &inst, &mut manifest, seeds, &project_type).await?;
 
     save_manifest(&inst, &manifest)?;
     emit_progress(app, InstallProgress {
@@ -484,58 +630,208 @@ pub async fn install_specific_version(
         total: 1,
         file: String::new(),
     });
-    Ok(entry)
+
+    installed_now
+        .into_iter()
+        .find(|m| m.project_id == project_id)
+        .ok_or_else(|| anyhow::anyhow!("This version could not be installed"))
 }
 
-/// Lists installed content of one type, including files added by hand.
-pub fn list_installed(instance_id: &str, project_type: &str) -> anyhow::Result<Vec<InstalledMod>> {
+/// Walks everything already in the manifest and pulls in whatever required
+/// dependency is still missing.
+///
+/// This is what modpack imports call. A pack lists the files it wants by name;
+/// if the author forgot a library, or a file was skipped, the instance would
+/// otherwise start into a Fabric error screen.
+pub async fn install_missing_dependencies(
+    app: &AppHandle,
+    instance_id: &str,
+) -> anyhow::Result<Vec<InstalledMod>> {
     let inst = instance::get(instance_id).ok_or_else(|| anyhow::anyhow!("Instance not found"))?;
-    let manifest = load_manifest(&inst);
+    if inst.loader == "vanilla" {
+        return Ok(Vec::new());
+    }
 
-    let mut out: Vec<InstalledMod> = manifest
+    let mut manifest = load_manifest(&inst);
+    let seeds: Vec<Task> = manifest
         .iter()
-        .filter(|m| m.project_type == project_type)
-        .cloned()
+        .filter(|m| m.project_type == "mod" && !m.project_id.is_empty())
+        .map(|m| Task {
+            project_id: m.project_id.clone(),
+            pinned: None,
+            is_root: true,
+        })
         .collect();
 
-    if let Ok(entries) = std::fs::read_dir(inst.content_dir(project_type)) {
+    if seeds.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let (installed_now, _) = install_graph(app, &inst, &mut manifest, seeds, "mod").await?;
+    save_manifest(&inst, &manifest)?;
+    Ok(installed_now)
+}
+
+/// Lists installed content of one type, including files added by hand and
+/// files that are currently disabled.
+///
+/// Icons are backfilled from Modrinth and written straight back into the
+/// manifest, so entries that predate icon support - and everything that came in
+/// through a modpack - get a picture on the next render for free.
+pub async fn list_installed(
+    instance_id: &str,
+    project_type: &str,
+) -> anyhow::Result<Vec<InstalledMod>> {
+    let inst = instance::get(instance_id).ok_or_else(|| anyhow::anyhow!("Instance not found"))?;
+    let mut manifest = load_manifest(&inst);
+
+    let dir = inst.content_dir(project_type);
+
+    let mut out: Vec<InstalledMod> = Vec::new();
+    for m in manifest.iter().filter(|m| m.project_type == project_type) {
+        let mut entry = m.clone();
+        entry.enabled = match resolve_on_disk(&dir, &m.filename) {
+            Some((_, enabled)) => enabled,
+            None => true,
+        };
+        out.push(entry);
+    }
+
+    // Files the user dropped in themselves, plus anything a pack wrote that the
+    // manifest does not know about. `.disabled` counts too, otherwise a mod
+    // would vanish from the list the moment it was switched off.
+    if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            let is_content = name.ends_with(".jar") || name.ends_with(".zip");
-            if !is_content || manifest.iter().any(|m| m.filename == name) {
+            let base = base_filename(&name);
+            let is_content = base.ends_with(".jar") || base.ends_with(".zip");
+            if !is_content || manifest.iter().any(|m| m.filename == base) {
                 continue;
             }
             out.push(InstalledMod {
                 project_id: String::new(),
                 version_id: String::new(),
-                title: name.clone(),
-                filename: name,
+                title: base.clone(),
+                filename: base,
                 version_number: "manual".into(),
                 project_type: project_type.to_string(),
+                icon_url: String::new(),
+                enabled: !name.ends_with(DISABLED_SUFFIX),
             });
         }
     }
+
+    // Backfill missing icons in one bulk request.
+    let needs_icon: Vec<String> = out
+        .iter()
+        .filter(|m| m.icon_url.is_empty() && !m.project_id.is_empty())
+        .map(|m| m.project_id.clone())
+        .collect();
+
+    if !needs_icon.is_empty() {
+        let icons = fetch_project_icons(&needs_icon).await;
+        if !icons.is_empty() {
+            for m in out.iter_mut() {
+                if m.icon_url.is_empty() {
+                    if let Some(url) = icons.get(&m.project_id) {
+                        m.icon_url = url.clone();
+                    }
+                }
+            }
+            let mut changed = false;
+            for m in manifest.iter_mut() {
+                if m.icon_url.is_empty() {
+                    if let Some(url) = icons.get(&m.project_id) {
+                        m.icon_url = url.clone();
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                save_manifest(&inst, &manifest).ok();
+            }
+        }
+    }
+
     Ok(out)
 }
 
-pub fn remove_mod(instance_id: &str, filename: &str, project_type: &str) -> anyhow::Result<()> {
-    let inst = instance::get(instance_id).ok_or_else(|| anyhow::anyhow!("Instance not found"))?;
-
-    // Guard against path traversal from a crafted file name
-    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+/// Rejects anything that could climb out of the content folder.
+fn check_filename(filename: &str) -> anyhow::Result<()> {
+    if filename.is_empty()
+        || filename.contains('/')
+        || filename.contains('\\')
+        || filename.contains("..")
+    {
         anyhow::bail!("Invalid file name");
     }
+    Ok(())
+}
 
-    let path = inst.content_dir(project_type).join(filename);
-    if path.exists() {
-        std::fs::remove_file(&path)?;
+/// Switches a file between loaded and parked, by renaming it to `.disabled`.
+/// Keeping the file means the choice is reversible and survives a restart,
+/// which is what every other launcher does too.
+pub fn set_mod_enabled(
+    instance_id: &str,
+    filename: &str,
+    project_type: &str,
+    enabled: bool,
+) -> anyhow::Result<()> {
+    let inst = instance::get(instance_id).ok_or_else(|| anyhow::anyhow!("Instance not found"))?;
+    let base = base_filename(filename);
+    check_filename(&base)?;
+
+    let dir = inst.content_dir(project_type);
+    let (current, currently_enabled) = resolve_on_disk(&dir, &base)
+        .ok_or_else(|| anyhow::anyhow!("{} is no longer in the folder.", base))?;
+
+    if currently_enabled == enabled {
+        return Ok(());
     }
 
-    let manifest: Vec<InstalledMod> = load_manifest(&inst)
-        .into_iter()
-        .filter(|m| m.filename != filename)
-        .collect();
+    let target = if enabled {
+        dir.join(&base)
+    } else {
+        dir.join(format!("{}{}", base, DISABLED_SUFFIX))
+    };
+    std::fs::rename(&current, &target)?;
+    Ok(())
+}
+
+/// Deletes a file and drops it from the manifest.
+///
+/// Two things went wrong before: a disabled mod is called `<name>.disabled` on
+/// disk while the UI hands over the plain name, so nothing was found and the
+/// call reported success; and a file that could not be deleted - the usual case
+/// being Windows holding the jar open while the game runs - produced an error
+/// nobody surfaced. Both are handled now, and a file that genuinely is not
+/// there is an error rather than a silent no-op.
+pub fn remove_mod(instance_id: &str, filename: &str, project_type: &str) -> anyhow::Result<()> {
+    let inst = instance::get(instance_id).ok_or_else(|| anyhow::anyhow!("Instance not found"))?;
+    let base = base_filename(filename);
+    check_filename(&base)?;
+
+    let dir = inst.content_dir(project_type);
+    let found = resolve_on_disk(&dir, &base);
+
+    if let Some((path, _)) = &found {
+        std::fs::remove_file(path).map_err(|e| {
+            anyhow::anyhow!(
+                "Could not delete {}: {}. If the game is running, close it first.",
+                base,
+                e
+            )
+        })?;
+    }
+
+    let before = load_manifest(&inst);
+    let had_entry = before.iter().any(|m| m.filename == base);
+    let manifest: Vec<InstalledMod> = before.into_iter().filter(|m| m.filename != base).collect();
     save_manifest(&inst, &manifest)?;
+
+    if found.is_none() && !had_entry {
+        anyhow::bail!("{} is not in this instance.", base);
+    }
     Ok(())
 }
 
@@ -616,11 +912,11 @@ pub async fn update_mod(
         file: old.title.clone(),
     });
 
-    let entry = download_version(&inst, &version, &project_id, &old.project_type, &old.title).await?;
+    let mut entry = download_version(&inst, &version, &project_id, &old.project_type, &old.title).await?;
+    entry.icon_url = old.icon_url.clone();
 
     if old.filename != entry.filename {
-        let old_path = inst.content_dir(&old.project_type).join(&old.filename);
-        if old_path.exists() {
+        if let Some((old_path, _)) = resolve_on_disk(&inst.content_dir(&old.project_type), &old.filename) {
             std::fs::remove_file(old_path).ok();
         }
     }
@@ -700,7 +996,11 @@ pub async fn repair_instance(app: &AppHandle, instance_id: String) -> anyhow::Re
         .await;
 
         let dir = inst.content_dir(&entry.project_type);
-        let current_path = dir.join(&entry.filename);
+        let on_disk = resolve_on_disk(&dir, &entry.filename);
+        let current_path = on_disk
+            .as_ref()
+            .map(|(p, _)| p.clone())
+            .unwrap_or_else(|| dir.join(&entry.filename));
 
         match best {
             Ok(version) => {
@@ -716,7 +1016,8 @@ pub async fn repair_instance(app: &AppHandle, instance_id: String) -> anyhow::Re
                 }
 
                 match download_version(&inst, &version, &entry.project_id, &entry.project_type, &entry.title).await {
-                    Ok(new_entry) => {
+                    Ok(mut new_entry) => {
+                        new_entry.icon_url = entry.icon_url.clone();
                         if new_entry.filename != entry.filename && current_path.exists() {
                             std::fs::remove_file(&current_path).ok();
                         }

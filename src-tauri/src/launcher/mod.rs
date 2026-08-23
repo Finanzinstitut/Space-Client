@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod clientmod;
 pub mod config;
+pub mod crash;
 pub mod download;
 pub mod instance;
 pub mod java;

@@ -4,6 +4,7 @@ mod launcher;
 
 use launcher::auth::{self, Account, AccountInfo, AccountStore, DeviceCodeInfo};
 use launcher::config::LauncherConfig;
+use launcher::crash;
 use launcher::instance::{self, Instance};
 use launcher::loader::{self, LoaderVersion};
 use launcher::manifest::{fetch_version_manifest, VersionEntry};
@@ -231,6 +232,7 @@ async fn list_instances() -> Result<Vec<Instance>, String> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn create_instance(
     name: String,
     mc_version: String,
@@ -238,6 +240,7 @@ async fn create_instance(
     loader_version: String,
     ram_mb: u32,
     parent_path: String,
+    install_client_mod: bool,
     state: State<'_, AppState>,
 ) -> Result<Instance, String> {
     let cfg = state.config.lock().unwrap().clone();
@@ -249,6 +252,7 @@ async fn create_instance(
         loader_version,
         ram_mb,
         parent_path,
+        install_client_mod,
     )
     .map_err(|e| e.to_string())
 }
@@ -290,12 +294,21 @@ async fn import_modpack(
     app: tauri::AppHandle,
     archive_path: String,
     parent_path: String,
+    install_client_mod: bool,
+    install_cosmetica: bool,
     state: State<'_, AppState>,
 ) -> Result<ImportResult, String> {
     let cfg = state.config.lock().unwrap().clone();
-    modpack::import_modpack(&app, &cfg, archive_path, parent_path)
-        .await
-        .map_err(|e| e.to_string())
+    modpack::import_modpack(
+        &app,
+        &cfg,
+        archive_path,
+        parent_path,
+        install_client_mod,
+        install_cosmetica,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -399,8 +412,10 @@ async fn install_instance(
 
     instance::upsert(inst.clone()).map_err(|e| e.to_string())?;
 
-    // The companion mod goes in last, after the loader exists.
-    launcher::clientmod::install_client_mod(&app, &inst).await.ok();
+    // The companion mod goes in last, after the loader exists. Cosmetica is
+    // not touched here - install_instance also runs on reinstall, and a user
+    // who removed Cosmetica should not get it back.
+    launcher::clientmod::install_extras(&app, &inst, false).await;
 
     Ok(inst)
 }
@@ -479,6 +494,13 @@ async fn is_running(id: String, state: State<'_, AppState>) -> Result<bool, Stri
     Ok(state.running.lock().unwrap().contains_key(&id))
 }
 
+/// Uploads this instance's newest crash report or log and returns what mclo.gs
+/// makes of it.
+#[tauri::command]
+async fn analyse_crash(id: String) -> Result<crash::CrashReport, String> {
+    crash::analyse(&id).await.map_err(|e| e.to_string())
+}
+
 // ---------------- mods (Modrinth) ----------------
 
 #[tauri::command]
@@ -543,7 +565,9 @@ async fn list_installed_mods(
     instance_id: String,
     project_type: String,
 ) -> Result<Vec<InstalledMod>, String> {
-    mods::list_installed(&instance_id, &project_type).map_err(|e| e.to_string())
+    mods::list_installed(&instance_id, &project_type)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -553,6 +577,29 @@ async fn remove_mod(
     project_type: String,
 ) -> Result<(), String> {
     mods::remove_mod(&instance_id, &filename, &project_type).map_err(|e| e.to_string())
+}
+
+/// Switches a mod, resource pack or shader on or off without deleting it.
+#[tauri::command]
+async fn set_mod_enabled(
+    instance_id: String,
+    filename: String,
+    project_type: String,
+    enabled: bool,
+) -> Result<(), String> {
+    mods::set_mod_enabled(&instance_id, &filename, &project_type, enabled)
+        .map_err(|e| e.to_string())
+}
+
+/// Pulls in every required dependency that is not installed yet.
+#[tauri::command]
+async fn install_missing_dependencies(
+    app: tauri::AppHandle,
+    instance_id: String,
+) -> Result<Vec<InstalledMod>, String> {
+    mods::install_missing_dependencies(&app, &instance_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Puts every installed mod onto a version that fits this instance, and parks
@@ -629,12 +676,15 @@ fn main() {
             launch_instance,
             kill_instance,
             is_running,
+            analyse_crash,
             search_mods,
             list_project_versions,
             install_mod,
             install_project_version,
             list_installed_mods,
             remove_mod,
+            set_mod_enabled,
+            install_missing_dependencies,
             repair_instance_mods,
             check_mod_updates,
             update_mod,

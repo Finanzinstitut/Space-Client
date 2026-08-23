@@ -164,6 +164,11 @@ fn slugify(name: &str) -> String {
 
 /// Creates a new instance. `parent_path` is where the instance folder is
 /// created - empty means "use the default instances folder".
+///
+/// `install_client_mod` is a real parameter rather than a hardcoded `true`, so
+/// an instance can be created without the Space Client companion mod - for
+/// example a plain vanilla-feel Fabric instance, or an imported pack the user
+/// wants to keep untouched.
 #[allow(clippy::too_many_arguments)]
 pub fn create(
     cfg: &LauncherConfig,
@@ -173,6 +178,7 @@ pub fn create(
     loader_version: String,
     ram_mb: u32,
     parent_path: String,
+    install_client_mod: bool,
 ) -> anyhow::Result<Instance> {
     if name.trim().is_empty() {
         anyhow::bail!("Please enter a name for the instance.");
@@ -203,7 +209,7 @@ pub fn create(
         loader_version,
         version_id: mc_version,
         ram_mb,
-        install_client_mod: true,
+        install_client_mod,
         created: format!("{}", chrono_now()),
     };
 

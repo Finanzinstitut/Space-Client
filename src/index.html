@@ -58,6 +58,16 @@
           <span>📦</span>
           <span data-i18n="import_hint"></span>
         </div>
+        <div class="row import-options">
+          <label class="check-row">
+            <input id="import-client-mod" type="checkbox" checked />
+            <span data-i18n="field_client_mod"></span>
+          </label>
+          <label class="check-row">
+            <input id="import-cosmetica" type="checkbox" checked />
+            <span data-i18n="field_cosmetica"></span>
+          </label>
+        </div>
         <div id="instance-list" class="instance-list"></div>
         <div id="global-status" class="status-line"></div>
         <div id="progress-wrap" class="progress-wrap hidden">
@@ -110,8 +120,15 @@
                 <button id="btn-check-mod-updates" class="btn secondary small" data-i18n="btn_check_updates"></button>
                 <button id="btn-update-all-mods" class="btn primary small hidden" data-i18n="btn_update_all"></button>
                 <button id="btn-repair-mods" class="btn secondary small" data-i18n="btn_repair"></button>
+                <button id="btn-fix-deps" class="btn secondary small" data-i18n="btn_fix_deps"></button>
               </div>
               <p class="hint" data-i18n="repair_hint"></p>
+
+              <div class="row">
+                <input id="mods-installed-query" type="text" data-i18n-ph="installed_search_ph" class="grow" />
+                <span id="mods-installed-count" class="hint"></span>
+              </div>
+
               <div id="mods-installed-list" class="mod-list"></div>
             </div>
           </div>
@@ -325,6 +342,14 @@
 
       <div class="field grow">
         <label class="check-row">
+          <input id="new-client-mod" type="checkbox" checked />
+          <span data-i18n="field_client_mod"></span>
+        </label>
+        <p class="hint" data-i18n="client_mod_hint"></p>
+      </div>
+
+      <div class="field grow">
+        <label class="check-row">
           <input id="new-cosmetica" type="checkbox" checked />
           <span data-i18n="field_cosmetica"></span>
         </label>
@@ -408,11 +433,14 @@
             <input type="checkbox" id="console-autoscroll" checked />
             <span data-i18n="console_autoscroll"></span>
           </label>
+          <button id="btn-crash-analyse" class="btn secondary small" data-i18n="btn_analyse"></button>
           <button id="btn-console-clear" class="btn secondary small" data-i18n="btn_clear"></button>
           <button id="btn-console-kill" class="btn danger small" data-i18n="btn_kill"></button>
           <button id="btn-console-close" class="btn secondary small" data-i18n="btn_close"></button>
         </div>
       </div>
+      <!-- Findings sit above the log, since the point is to save you reading it -->
+      <div id="crash-report" class="crash-report hidden"></div>
       <div id="console-output" class="console-output"></div>
     </div>
   </div>

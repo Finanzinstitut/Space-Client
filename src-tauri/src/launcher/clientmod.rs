@@ -103,6 +103,80 @@ pub async fn install_client_mod(app: &AppHandle, instance: &Instance) -> anyhow:
     Ok(Some(tag))
 }
 
+/// Modrinth slug of the cosmetics mod offered alongside the client.
+pub const COSMETICA_PROJECT: &str = "cosmetica";
+
+/// What a round of extras installation produced, so the UI can say something
+/// useful instead of failing the whole operation over a cosmetics mod.
+#[derive(Debug, Default, serde::Serialize, Clone)]
+pub struct ExtrasReport {
+    pub client_mod: Option<String>,
+    pub cosmetica: bool,
+    /// Human readable reasons for anything that did not happen.
+    pub notes: Vec<String>,
+}
+
+/// Installs the optional extras into an instance: the Space Client companion
+/// mod and, if asked for, Cosmetica.
+///
+/// Both instance creation and modpack import go through here. Previously the
+/// client mod was only installed as a side effect of `install_instance`, and
+/// Cosmetica only from the create-instance button in the frontend - which is
+/// why an imported pack ended up with neither.
+///
+/// Nothing in here is fatal: the instance is already usable, and losing a
+/// cosmetics mod is not a reason to leave the user with a failed import.
+pub async fn install_extras(
+    app: &AppHandle,
+    instance: &Instance,
+    want_cosmetica: bool,
+) -> ExtrasReport {
+    let mut report = ExtrasReport::default();
+
+    if instance.install_client_mod {
+        if supports_loader(&instance.loader) {
+            match install_client_mod(app, instance).await {
+                Ok(tag) => report.client_mod = tag,
+                Err(e) => report
+                    .notes
+                    .push(format!("The Space Client mod could not be installed: {}", e)),
+            }
+        } else {
+            report.notes.push(format!(
+                "The Space Client mod needs Fabric or Quilt, so it was skipped on this {} instance.",
+                instance.loader
+            ));
+        }
+    } else {
+        // The toggle may have been switched off after an earlier install.
+        remove_client_mod(instance).ok();
+    }
+
+    if want_cosmetica {
+        if instance.loader == "vanilla" {
+            report
+                .notes
+                .push("Cosmetica needs a mod loader, so it was skipped.".to_string());
+        } else {
+            match crate::launcher::mods::install_mod(
+                app,
+                instance.id.clone(),
+                COSMETICA_PROJECT.to_string(),
+                "mod".to_string(),
+            )
+            .await
+            {
+                Ok(_) => report.cosmetica = true,
+                Err(e) => report
+                    .notes
+                    .push(format!("Cosmetica could not be installed: {}", e)),
+            }
+        }
+    }
+
+    report
+}
+
 /// Removes the companion mod, used when the per-instance toggle is switched off.
 pub fn remove_client_mod(instance: &Instance) -> anyhow::Result<()> {
     let path = instance.mods_dir().join(FILE_NAME);

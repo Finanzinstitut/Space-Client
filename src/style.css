@@ -744,3 +744,91 @@ input.grow { flex: 1; }
 }
 
 .check-row input { width: auto; margin: 0; }
+
+/* ---------- crash analysis ---------- */
+
+.crash-report {
+  margin: 0 14px 10px;
+  padding: 12px 14px;
+  border: 1px solid #4a3a7a;
+  border-radius: 10px;
+  background: #150f2e;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.crash-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.crash-source { font-size: 11px; color: var(--text-dim); }
+.crash-link { margin-left: auto; font-size: 12px; color: var(--accent-2); }
+.crash-close {
+  all: unset;
+  cursor: pointer;
+  padding: 0 6px;
+  font-size: 17px;
+  line-height: 1;
+  color: var(--text-dim);
+}
+.crash-close:hover { color: var(--text); }
+
+.crash-busy, .crash-note { font-size: 13px; color: var(--text-dim); }
+
+.crash-item {
+  padding: 10px 0;
+  border-top: 1px solid #2a2555;
+}
+.crash-msg { font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+
+/* The offending line, kept to one row so it cannot push the fix off screen */
+.crash-excerpt {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: #0d0a22;
+  border-radius: 5px;
+  padding: 5px 7px;
+  margin-bottom: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Suggestions are what people came for, so they get the accent */
+.crash-fix {
+  font-size: 12.5px;
+  color: var(--text);
+  padding-left: 14px;
+  position: relative;
+  margin-top: 4px;
+}
+.crash-fix::before {
+  content: "";
+  position: absolute;
+  left: 2px; top: 7px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.crash-info {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #2a2555;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* Import options sit directly under the drop zone. */
+.import-options {
+  gap: 18px;
+  margin: -4px 0 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* A disabled mod stays visible but reads as parked rather than active. */
+.mod-card.is-disabled { opacity: .55; border-style: dashed; }
+.mod-card.is-disabled .mod-icon { filter: grayscale(1); }

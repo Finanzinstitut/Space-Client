@@ -18,6 +18,13 @@ pub struct ImportResult {
     pub note: String,
 }
 
+/// Per-import choices the user made in the UI.
+#[derive(Debug, Clone, Copy)]
+pub struct ImportOptions {
+    pub install_client_mod: bool,
+    pub install_cosmetica: bool,
+}
+
 fn http() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
         .user_agent("Finanzinstitut/SpaceClient/0.1")
@@ -58,26 +65,81 @@ fn extract_overrides(
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let name = entry.name().to_string();
-        if name.ends_with('/') {
+
+        // Directory entries carry no payload. Some packers write them without
+        // a trailing slash, and `mods` or `config` then collided with the
+        // folders the instance already has - `fs::write` onto a directory is an
+        // error, and it took the whole import down with it.
+        if name.ends_with('/') || entry.is_dir() {
             continue;
         }
         let Some(prefix) = prefixes.iter().find(|p| name.starts_with(**p)) else {
             continue;
         };
         let rel = &name[prefix.len()..];
+        if rel.is_empty() {
+            continue;
+        }
         let Some(rel_path) = safe_relative(rel) else {
             continue;
         };
         let dest = game_dir.join(rel_path);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
+        if dest.is_dir() {
+            continue;
         }
         let mut buf = Vec::new();
-        entry.read_to_end(&mut buf)?;
-        std::fs::write(&dest, buf)?;
-        count += 1;
+        if entry.read_to_end(&mut buf).is_err() {
+            continue;
+        }
+
+        // One unreadable or unwritable override is not worth failing the
+        // import over - the pack is still perfectly usable without it.
+        let written = dest
+            .parent()
+            .map(std::fs::create_dir_all)
+            .transpose()
+            .and_then(|_| std::fs::write(&dest, buf));
+        if written.is_ok() {
+            count += 1;
+        } else {
+            eprintln!("Skipping override {}", name);
+        }
     }
     Ok(count)
+}
+
+/// Pulls the project and version id out of a Modrinth CDN link.
+///
+/// mrpack entries address their files by path, not by project, so an imported
+/// pack used to be invisible to the manifest: no update checks, no icons, no
+/// dependency resolution, and removing a mod left the manifest untouched.
+/// The download URL carries both ids, so they can be recovered for free:
+/// `https://cdn.modrinth.com/data/<PROJECT>/versions/<VERSION>/<file>`
+fn ids_from_cdn_url(url: &str) -> Option<(String, String)> {
+    let rest = url.split("cdn.modrinth.com/data/").nth(1)?;
+    let mut parts = rest.split('/');
+    let project = parts.next()?;
+    if parts.next()? != "versions" {
+        return None;
+    }
+    let version = parts.next()?;
+    if project.is_empty() || version.is_empty() {
+        return None;
+    }
+    Some((project.to_string(), version.to_string()))
+}
+
+/// Which content folder a mrpack path lands in. The path is authoritative here,
+/// so no API lookup is needed.
+fn type_from_path(path: &str) -> &'static str {
+    let p = path.replace('\\', "/");
+    if p.starts_with("resourcepacks/") {
+        "resourcepack"
+    } else if p.starts_with("shaderpacks/") {
+        "shader"
+    } else {
+        "mod"
+    }
 }
 
 /// Maps a mrpack dependency block onto our loader names.
@@ -112,20 +174,28 @@ fn loader_from_curseforge(id: &str) -> (String, String) {
 }
 
 /// Downloads the file list of a Modrinth pack into the instance.
+///
+/// Returns the files that could not be fetched, plus manifest entries for
+/// everything that landed, so the pack takes part in update checks, icon
+/// lookups, dependency resolution and removal like anything else.
 async fn download_mrpack_files(
     app: &AppHandle,
     game_dir: &Path,
     files: &[serde_json::Value],
-) -> Vec<String> {
+) -> (Vec<String>, Vec<crate::launcher::mods::InstalledMod>) {
     let total = files.len() as u64;
     let done = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let skipped = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let installed = std::sync::Arc::new(std::sync::Mutex::new(Vec::<
+        crate::launcher::mods::InstalledMod,
+    >::new()));
 
     futures_util::stream::iter(files.iter().cloned())
         .for_each_concurrent(6, |file| {
             let game_dir = game_dir.to_path_buf();
             let done = done.clone();
             let skipped = skipped.clone();
+            let installed = installed.clone();
             async move {
                 let path = file.get("path").and_then(|v| v.as_str()).unwrap_or_default();
 
@@ -137,6 +207,7 @@ async fn download_mrpack_files(
 
                 let Some(rel) = safe_relative(path) else {
                     skipped.lock().unwrap().push(path.to_string());
+                    done.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return;
                 };
 
@@ -150,10 +221,11 @@ async fn download_mrpack_files(
 
                 if url.is_empty() {
                     skipped.lock().unwrap().push(path.to_string());
+                    done.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     return;
                 }
 
-                let dest = game_dir.join(rel);
+                let dest = game_dir.join(&rel);
                 let result = async {
                     if let Some(parent) = dest.parent() {
                         fs::create_dir_all(parent).await?;
@@ -161,12 +233,36 @@ async fn download_mrpack_files(
                     let bytes = http()?.get(&url).send().await?.error_for_status()?.bytes().await?;
                     let mut f = fs::File::create(&dest).await?;
                     f.write_all(&bytes).await?;
+                    f.flush().await?;
                     Ok::<(), anyhow::Error>(())
                 }
                 .await;
 
-                if result.is_err() {
-                    skipped.lock().unwrap().push(path.to_string());
+                match result {
+                    Ok(_) => {
+                        let filename = rel
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        if let Some((project_id, version_id)) = ids_from_cdn_url(&url) {
+                            installed.lock().unwrap().push(
+                                crate::launcher::mods::InstalledMod {
+                                    project_id,
+                                    version_id,
+                                    title: filename.clone(),
+                                    filename,
+                                    version_number: String::new(),
+                                    project_type: type_from_path(path).to_string(),
+                                    icon_url: String::new(),
+                                    enabled: true,
+                                },
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("mrpack file failed ({}): {}", path, e);
+                        skipped.lock().unwrap().push(path.to_string());
+                    }
                 }
 
                 let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
@@ -180,8 +276,35 @@ async fn download_mrpack_files(
         })
         .await;
 
-    let out = skipped.lock().unwrap().clone();
-    out
+    let out_skipped = skipped.lock().unwrap().clone();
+    let out_installed = installed.lock().unwrap().clone();
+    (out_skipped, out_installed)
+}
+
+/// Shared tail of every import: pull in any required dependency the pack did
+/// not ship, then add the Space Client mod and, if wanted, Cosmetica.
+async fn finish_import(
+    app: &AppHandle,
+    inst: &Instance,
+    want_cosmetica: bool,
+    note: &mut String,
+) {
+    match crate::launcher::mods::install_missing_dependencies(app, &inst.id).await {
+        Ok(added) if !added.is_empty() => {
+            note.push_str(&format!(
+                "{} missing dependency mod(s) were added automatically. ",
+                added.len()
+            ));
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("Dependency resolution after import failed: {}", e),
+    }
+
+    let extras = crate::launcher::clientmod::install_extras(app, inst, want_cosmetica).await;
+    for n in extras.notes {
+        note.push_str(&n);
+        note.push(' ');
+    }
 }
 
 /// Imports a modpack archive and returns the instance it created.
@@ -190,6 +313,8 @@ pub async fn import_modpack(
     cfg: &LauncherConfig,
     archive_path: String,
     parent_path: String,
+    install_client_mod: bool,
+    install_cosmetica: bool,
 ) -> anyhow::Result<ImportResult> {
     let path = PathBuf::from(&archive_path);
     if !path.exists() {
@@ -222,10 +347,12 @@ pub async fn import_modpack(
     let has_curseforge = archive.by_name("manifest.json").is_ok();
     let has_norisk = archive.by_name("profile.json").is_ok();
 
+    let opts = ImportOptions { install_client_mod, install_cosmetica };
+
     match ext.as_str() {
-        _ if has_modrinth => import_modrinth(app, cfg, &mut archive, parent_path).await,
-        _ if has_norisk => import_norisk(app, cfg, &mut archive, parent_path).await,
-        _ if has_curseforge => import_curseforge(app, cfg, &mut archive, parent_path).await,
+        _ if has_modrinth => import_modrinth(app, cfg, &mut archive, parent_path, opts).await,
+        _ if has_norisk => import_norisk(app, cfg, &mut archive, parent_path, opts).await,
+        _ if has_curseforge => import_curseforge(app, cfg, &mut archive, parent_path, opts).await,
         _ => anyhow::bail!(
             "Unrecognised modpack. Expected a Modrinth .mrpack, a NoRisk .noriskpack/.nrc, or a CurseForge .zip with a manifest.json."
         ),
@@ -237,6 +364,7 @@ async fn import_modrinth(
     cfg: &LauncherConfig,
     archive: &mut zip::ZipArchive<std::fs::File>,
     parent_path: String,
+    opts: ImportOptions,
 ) -> anyhow::Result<ImportResult> {
     let raw = read_zip_entry(archive, "modrinth.index.json")
         .ok_or_else(|| anyhow::anyhow!("modrinth.index.json is missing"))?;
@@ -266,6 +394,7 @@ async fn import_modrinth(
         loader_version,
         cfg.max_ram_mb,
         parent_path,
+        opts.install_client_mod,
     )?;
 
     let game_dir = inst.game_dir();
@@ -276,16 +405,19 @@ async fn import_modrinth(
 
     let empty = vec![];
     let files = index.get("files").and_then(|v| v.as_array()).unwrap_or(&empty);
-    let skipped = download_mrpack_files(app, &game_dir, files).await;
+    let (skipped, entries) = download_mrpack_files(app, &game_dir, files).await;
 
-    // mrpack files are addressed by path rather than project id, so they are
-    // not in the manifest and repair has nothing to check. The pack declares
-    // the Minecraft version it targets, so a mismatch is unlikely here.
-    let note = if skipped.is_empty() {
-        String::new()
-    } else {
-        format!("{} file(s) could not be downloaded.", skipped.len())
-    };
+    // Register what landed. The ids come out of the CDN links, so an imported
+    // pack is a first-class citizen: update checks, icons, repair and removal
+    // all work on it.
+    crate::launcher::mods::write_manifest(&inst, &entries).ok();
+
+    let mut note = String::new();
+    if !skipped.is_empty() {
+        note.push_str(&format!("{} file(s) could not be downloaded. ", skipped.len()));
+    }
+
+    finish_import(app, &inst, opts.install_cosmetica, &mut note).await;
 
     emit_progress(app, InstallProgress {
         stage: "done".into(),
@@ -302,6 +434,7 @@ async fn import_curseforge(
     cfg: &LauncherConfig,
     archive: &mut zip::ZipArchive<std::fs::File>,
     parent_path: String,
+    opts: ImportOptions,
 ) -> anyhow::Result<ImportResult> {
     let raw = read_zip_entry(archive, "manifest.json")
         .ok_or_else(|| anyhow::anyhow!("manifest.json is missing"))?;
@@ -340,6 +473,7 @@ async fn import_curseforge(
         loader_version,
         cfg.max_ram_mb,
         parent_path,
+        opts.install_client_mod,
     )?;
 
     let game_dir = inst.game_dir();
@@ -374,14 +508,15 @@ async fn import_curseforge(
         })
         .unwrap_or_default();
 
-    let note = if skipped.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "Config files and overrides were imported, but the {} mod(s) listed in the manifest need the CurseForge API, which requires a personal API key. Add them manually or via the Modrinth browser for now.",
+    let mut note = String::new();
+    if !skipped.is_empty() {
+        note.push_str(&format!(
+            "Config files and overrides were imported, but the {} mod(s) listed in the manifest need the CurseForge API, which requires a personal API key. Add them manually or via the Modrinth browser for now. ",
             skipped.len()
-        )
-    };
+        ));
+    }
+
+    finish_import(app, &inst, opts.install_cosmetica, &mut note).await;
 
     emit_progress(app, InstallProgress {
         stage: "done".into(),
@@ -403,6 +538,7 @@ async fn import_norisk(
     cfg: &LauncherConfig,
     archive: &mut zip::ZipArchive<std::fs::File>,
     parent_path: String,
+    opts: ImportOptions,
 ) -> anyhow::Result<ImportResult> {
     let raw = read_zip_entry(archive, "profile.json")
         .ok_or_else(|| anyhow::anyhow!("profile.json is missing"))?;
@@ -444,6 +580,7 @@ async fn import_norisk(
         loader_version,
         ram_mb,
         parent_path,
+        opts.install_client_mod,
     )?;
 
     let game_dir = inst.game_dir();
@@ -540,24 +677,28 @@ async fn import_norisk(
 
                 match result {
                     Ok(_) => {
-                        if enabled {
-                            installed.lock().unwrap().push(crate::launcher::mods::InstalledMod {
-                                project_id,
-                                version_id: src
-                                    .get("version_id")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or_default()
-                                    .to_string(),
-                                title: display.clone(),
-                                filename: target_name,
-                                version_number: m
-                                    .get("version")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or_default()
-                                    .to_string(),
-                                project_type,
-                            });
-                        }
+                        // The manifest always stores the plain name; whether a
+                        // file is disabled is read back off disk. Storing
+                        // "x.jar.disabled" here meant remove and update could
+                        // never find the file again.
+                        installed.lock().unwrap().push(crate::launcher::mods::InstalledMod {
+                            project_id,
+                            version_id: src
+                                .get("version_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                            title: display.clone(),
+                            filename: file_name.clone(),
+                            version_number: m
+                                .get("version")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                            project_type,
+                            icon_url: String::new(),
+                            enabled,
+                        });
                     }
                     Err(_) => skipped.lock().unwrap().push(display.clone()),
                 }
@@ -605,6 +746,8 @@ async fn import_norisk(
             skipped.extend(report.incompatible.clone());
         }
     }
+    finish_import(app, &inst, opts.install_cosmetica, &mut note).await;
+
     if profile
         .pointer("/settings/custom_jvm_args")
         .and_then(|v| v.as_str())

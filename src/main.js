@@ -556,6 +556,116 @@ setInterval(() => {
   }
 }, 3000);
 
+// ---------------- crash analysis ----------------
+
+/**
+ * Sends this instance's newest crash report to mclo.gs and shows what it found.
+ *
+ * The log goes to a third party, which is the whole point - their analyser is
+ * what turns a wall of stack traces into a sentence - but it is worth being
+ * plain about, so the panel says where the log went and links to it.
+ */
+async function analyseCrash() {
+  var panel = $("crash-report");
+  var button = $("btn-crash-analyse");
+  if (!panel || !consoleInstanceId) return;
+
+  panel.classList.remove("hidden");
+  panel.innerHTML = '<div class="crash-busy">' + t("crash_working") + "</div>";
+  if (button) button.disabled = true;
+
+  try {
+    var report = await invoke("analyse_crash", { id: consoleInstanceId });
+    renderCrashReport(report);
+  } catch (e) {
+    panel.innerHTML =
+      '<div class="crash-head"><b>' + t("crash_failed") + "</b></div>" +
+      '<div class="crash-note"></div>';
+    panel.querySelector(".crash-note").textContent = String(e);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function renderCrashReport(report) {
+  var panel = $("crash-report");
+  panel.innerHTML = "";
+
+  var head = document.createElement("div");
+  head.className = "crash-head";
+  var title = document.createElement("b");
+  title.textContent = report.title || t("crash_result");
+  head.appendChild(title);
+
+  var src = document.createElement("span");
+  src.className = "crash-source";
+  src.textContent = report.source;
+  head.appendChild(src);
+
+  var link = document.createElement("a");
+  link.className = "crash-link";
+  link.href = report.url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = t("crash_open");
+  head.appendChild(link);
+
+  var close = document.createElement("button");
+  close.className = "crash-close";
+  close.textContent = "\u00d7";
+  close.addEventListener("click", function () {
+    panel.classList.add("hidden");
+  });
+  head.appendChild(close);
+
+  panel.appendChild(head);
+
+  if (!report.problems || report.problems.length === 0) {
+    var none = document.createElement("div");
+    none.className = "crash-note";
+    // Nothing recognised is genuinely useful to know, and not the same as a
+    // failure - it means look at the log yourself, or share the link.
+    none.textContent = t("crash_none");
+    panel.appendChild(none);
+  }
+
+  (report.problems || []).forEach(function (problem) {
+    var item = document.createElement("div");
+    item.className = "crash-item";
+
+    var msg = document.createElement("div");
+    msg.className = "crash-msg";
+    msg.textContent = problem.message;
+    item.appendChild(msg);
+
+    if (problem.excerpt) {
+      var code = document.createElement("code");
+      code.className = "crash-excerpt";
+      code.textContent = problem.excerpt;
+      item.appendChild(code);
+    }
+
+    (problem.solutions || []).forEach(function (solution) {
+      var fix = document.createElement("div");
+      fix.className = "crash-fix";
+      fix.textContent = solution;
+      item.appendChild(fix);
+    });
+
+    panel.appendChild(item);
+  });
+
+  if (report.information && report.information.length) {
+    var info = document.createElement("div");
+    info.className = "crash-info";
+    info.textContent = report.information.slice(0, 6).join("  ·  ");
+    panel.appendChild(info);
+  }
+}
+
+var crashButton = $("btn-crash-analyse");
+if (crashButton) crashButton.addEventListener("click", analyseCrash);
+
 // ---------------- live console ----------------
 let consoleInstanceId = null;
 const MAX_CONSOLE_LINES = 2000;
@@ -628,9 +738,13 @@ async function importModpack(archivePath) {
   $("progress-wrap").classList.remove("hidden");
 
   try {
+    const clientModBox = $("import-client-mod");
+    const cosmeticaBox = $("import-cosmetica");
     const result = await invoke("import_modpack", {
       archivePath,
       parentPath: "",
+      installClientMod: clientModBox ? clientModBox.checked : true,
+      installCosmetica: cosmeticaBox ? cosmeticaBox.checked : false,
     });
 
     await refreshInstances();
@@ -892,6 +1006,8 @@ $("btn-new-instance").addEventListener("click", () => {
   $("new-ram-value").textContent = $("new-ram").value + " MB";
   const cosmeticaBox = $("new-cosmetica");
   if (cosmeticaBox) cosmeticaBox.checked = true;
+  const clientModBox = $("new-client-mod");
+  if (clientModBox) clientModBox.checked = true;
   setStatus("create-status", "");
   $("modal-backdrop").classList.remove("hidden");
   refreshNewLoaderVersions();
@@ -917,6 +1033,7 @@ $("btn-confirm-create").addEventListener("click", async () => {
     return;
   }
   try {
+    const clientModBox = $("new-client-mod");
     const inst = await invoke("create_instance", {
       name,
       mcVersion: $("new-version").value,
@@ -924,6 +1041,7 @@ $("btn-confirm-create").addEventListener("click", async () => {
       loaderVersion: $("new-loader-version").value,
       ramMb: parseInt($("new-ram").value, 10),
       parentPath: $("new-path").value,
+      installClientMod: clientModBox ? clientModBox.checked : true,
     });
     const cosmeticaBox = $("new-cosmetica");
     const wantsCosmetica = cosmeticaBox ? cosmeticaBox.checked : false;
@@ -1378,71 +1496,182 @@ async function addMod(hit, btn) {
   }
 }
 
-async function loadInstalledMods() {
-  const inst = currentModsInstance();
-  if (!inst) return;
-  const list = $("mods-installed-list");
-  try {
-    installedCache = await invoke("list_installed_mods", {
-      instanceId: inst.id,
-      projectType: currentType,
-    });
-    list.innerHTML = "";
+/** Free-text filter for the installed list. Kept out of installedCache so the
+ *  browse tab still knows about everything that is installed. */
+let installedFilter = "";
 
-    if (installedCache.length === 0) {
-      const p = document.createElement("p");
-      p.className = "empty-note";
-      p.textContent = t("mods_none_installed");
-      list.appendChild(p);
-      return;
+function renderInstalledMods() {
+  const inst = currentModsInstance();
+  const list = $("mods-installed-list");
+  list.innerHTML = "";
+
+  const needle = installedFilter.trim().toLowerCase();
+  const shown = needle
+    ? installedCache.filter(
+        (m) =>
+          m.title.toLowerCase().includes(needle) ||
+          m.filename.toLowerCase().includes(needle)
+      )
+    : installedCache;
+
+  const count = $("mods-installed-count");
+  if (count) {
+    count.textContent = needle
+      ? t("installed_count_filtered", {
+          shown: shown.length,
+          total: installedCache.length,
+        })
+      : t("installed_count", { total: installedCache.length });
+  }
+
+  if (installedCache.length === 0) {
+    const p = document.createElement("p");
+    p.className = "empty-note";
+    p.textContent = t("mods_none_installed");
+    list.appendChild(p);
+    return;
+  }
+  if (shown.length === 0) {
+    const p = document.createElement("p");
+    p.className = "empty-note";
+    p.textContent = t("mods_no_results");
+    list.appendChild(p);
+    return;
+  }
+
+  shown.forEach((m) => {
+    const pending = availableUpdates.find(
+      (u) => m.project_id && u.project_id === m.project_id
+    );
+
+    const actions = document.createElement("div");
+    actions.className = "mod-actions";
+
+    if (pending) {
+      const upd = document.createElement("button");
+      upd.className = "btn primary small";
+      upd.textContent = t("btn_update");
+      upd.onclick = () => updateOne(pending, upd);
+      actions.appendChild(upd);
     }
 
-    installedCache.forEach((m) => {
-      const pending = availableUpdates.find((u) => u.project_id === m.project_id);
-
-      const actions = document.createElement("div");
-      actions.className = "mod-actions";
-
-      if (pending) {
-        const upd = document.createElement("button");
-        upd.className = "btn primary small";
-        upd.textContent = t("btn_update");
-        upd.onclick = () => updateOne(pending, upd);
-        actions.appendChild(upd);
+    // Disabling renames the file to <name>.disabled, so the loader ignores it
+    // while the file - and any config it wrote - stays put.
+    const toggle = document.createElement("button");
+    toggle.className = "btn secondary small";
+    toggle.textContent = m.enabled ? t("btn_disable") : t("btn_enable");
+    toggle.onclick = async () => {
+      toggle.disabled = true;
+      try {
+        await invoke("set_mod_enabled", {
+          instanceId: inst.id,
+          filename: m.filename,
+          projectType: currentType,
+          enabled: !m.enabled,
+        });
+        setStatus(
+          "mods-status",
+          m.enabled
+            ? t("mod_disabled", { name: m.title })
+            : t("mod_enabled", { name: m.title }),
+          "success"
+        );
+        await loadInstalledMods();
+      } catch (e) {
+        toggle.disabled = false;
+        setStatus("mods-status", String(e), "error");
       }
+    };
+    actions.appendChild(toggle);
 
-      const btn = document.createElement("button");
-      btn.className = "btn danger small";
-      btn.textContent = t("btn_remove");
-      btn.onclick = async () => {
+    const btn = document.createElement("button");
+    btn.className = "btn danger small";
+    btn.textContent = t("btn_remove");
+    btn.onclick = async () => {
+      btn.disabled = true;
+      // The old version had no error handling at all, so a locked jar - the
+      // usual case being the game still running on Windows - looked like a
+      // dead button.
+      try {
         await invoke("remove_mod", {
           instanceId: inst.id,
           filename: m.filename,
           projectType: currentType,
         });
-        availableUpdates = availableUpdates.filter((u) => u.project_id !== m.project_id);
+        availableUpdates = availableUpdates.filter(
+          (u) => u.project_id !== m.project_id
+        );
+        setStatus("mods-status", t("mod_removed", { name: m.title }), "success");
         await loadInstalledMods();
         await searchMods();
-      };
-      actions.appendChild(btn);
+      } catch (e) {
+        btn.disabled = false;
+        setStatus("mods-status", String(e), "error");
+      }
+    };
+    actions.appendChild(btn);
 
-      const meta = pending
-        ? t("update_arrow", { old: m.version_number, new: pending.new_version })
-        : m.version_number === "manual"
-        ? t("mods_manual")
-        : m.version_number;
+    const meta = pending
+      ? t("update_arrow", { old: m.version_number, new: pending.new_version })
+      : m.version_number === "manual"
+      ? t("mods_manual")
+      : m.version_number;
 
-      const card = modCard(
-        { title: m.title, description: m.filename, icon_url: "", meta },
-        actions
-      );
-      if (pending) card.classList.add("has-update");
-      list.appendChild(card);
+    const card = modCard(
+      {
+        title: m.title,
+        description: m.filename,
+        icon_url: m.icon_url,
+        meta: m.enabled ? meta : `${meta} · ${t("mod_is_disabled")}`,
+      },
+      actions
+    );
+    if (pending) card.classList.add("has-update");
+    if (!m.enabled) card.classList.add("is-disabled");
+    list.appendChild(card);
+  });
+}
+
+async function loadInstalledMods() {
+  const inst = currentModsInstance();
+  if (!inst) return;
+  try {
+    installedCache = await invoke("list_installed_mods", {
+      instanceId: inst.id,
+      projectType: currentType,
     });
+    renderInstalledMods();
   } catch (e) {
     setStatus("mods-status", String(e), "error");
   }
 }
+
+$("mods-installed-query").addEventListener("input", (e) => {
+  installedFilter = e.target.value;
+  renderInstalledMods();
+});
+
+$("btn-fix-deps").addEventListener("click", async () => {
+  const inst = currentModsInstance();
+  if (!inst) return;
+  $("btn-fix-deps").disabled = true;
+  setStatus("mods-status", t("deps_running"));
+  try {
+    const added = await invoke("install_missing_dependencies", {
+      instanceId: inst.id,
+    });
+    setStatus(
+      "mods-status",
+      added.length ? t("deps_added", { count: added.length }) : t("deps_none"),
+      "success"
+    );
+    await loadInstalledMods();
+  } catch (e) {
+    setStatus("mods-status", String(e), "error");
+  } finally {
+    $("btn-fix-deps").disabled = false;
+  }
+});
 
 async function checkModUpdates() {
   const inst = currentModsInstance();
