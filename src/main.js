@@ -1924,11 +1924,48 @@ async function checkUpdate() {
         c: info.current_version,
       });
       $("update-banner").classList.remove("hidden");
-      $("btn-update-download").onclick = () => shell.open(info.release_url).catch(() => {});
+      $("btn-update-download").onclick = () => installUpdate(info);
       $("btn-update-later").onclick = () => $("update-banner").classList.add("hidden");
     }
   } catch {
     // A failed update check must never block playing.
+  }
+}
+
+/**
+ * Downloads the new installer and offers to start it.
+ *
+ * The launcher cannot overwrite itself while running, so the installer is
+ * fetched first and only then started - at which point this window closes and
+ * the installer takes over. Anything already playing keeps playing: the game
+ * runs in its own process and does not care what happens to the launcher.
+ */
+async function installUpdate(info) {
+  var button = $("btn-update-download");
+  var text = $("update-text");
+  var original = text ? text.textContent : "";
+
+  if (button) button.disabled = true;
+  if (text) text.textContent = t("update_downloading");
+
+  try {
+    var path = await invoke("download_update");
+    if (text) text.textContent = t("update_ready");
+
+    // Opening the file runs the installer. If that is refused - blocked, or no
+    // handler - the release page is still one click away, so the update is
+    // never a dead end.
+    await shell.open(path);
+  } catch (e) {
+    if (text) text.textContent = t("update_failed") + " " + String(e);
+    if (info && info.release_url) {
+      shell.open(info.release_url).catch(function () {});
+    }
+  } finally {
+    if (button) button.disabled = false;
+    if (text && original && text.textContent === t("update_ready")) {
+      text.textContent = original;
+    }
   }
 }
 

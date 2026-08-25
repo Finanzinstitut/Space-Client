@@ -43,6 +43,9 @@ export const translations = {
     crash_open: "Open on mclo.gs",
     crash_none: "Nothing recognised in this log. Open it on mclo.gs and share the link when asking for help.",
     crash_failed: "Could not analyse this log",
+    update_downloading: "Downloading the update...",
+    update_ready: "Downloaded. Starting the installer - the launcher will close.",
+    update_failed: "Update download failed:",
     btn_new_instance: "+ New Instance",
     field_client_mod: "Install the Space Client mod",
     client_mod_hint:
@@ -280,6 +283,9 @@ export const translations = {
     crash_open: "Auf mclo.gs öffnen",
     crash_none: "In diesem Log wurde nichts Bekanntes gefunden. Öffne es auf mclo.gs und teile den Link, wenn du um Hilfe bittest.",
     crash_failed: "Log konnte nicht analysiert werden",
+    update_downloading: "Update wird heruntergeladen...",
+    update_ready: "Fertig. Installer wird gestartet - der Launcher schließt sich.",
+    update_failed: "Update-Download fehlgeschlagen:",
     btn_new_instance: "+ Neue Instanz",
     field_client_mod: "Space-Client-Mod installieren",
     client_mod_hint:

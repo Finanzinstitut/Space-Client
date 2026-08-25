@@ -89,6 +89,12 @@ async fn check_update(state: State<'_, AppState>) -> Result<UpdateInfo, String> 
     Ok(update::check_for_update().await)
 }
 
+/// Fetches the newest installer and returns its path, ready to be started.
+#[tauri::command]
+async fn download_update() -> Result<String, String> {
+    update::download_update().await.map_err(|e| e.to_string())
+}
+
 // ---------------- accounts ----------------
 
 #[tauri::command]
@@ -703,6 +709,7 @@ fn main() {
             set_install_path,
             set_settings,
             check_update,
+            download_update,
             get_account,
             start_login,
             complete_login,
