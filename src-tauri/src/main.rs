@@ -11,6 +11,7 @@ use launcher::manifest::{fetch_version_manifest, VersionEntry};
 use launcher::modpack::{self, ImportResult};
 use launcher::mods::{self, InstalledMod, ModHit, ModUpdate, ProjectVersion, RepairReport};
 use launcher::skin::{self, SkinProfile};
+use launcher::skinlib::{self, SavedSkin};
 use launcher::update::{self, UpdateInfo};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -185,9 +186,59 @@ async fn get_skin_profile() -> Result<SkinProfile, String> {
     skin::get_profile().await.map_err(|e| e.to_string())
 }
 
+/// Uploads a skin and keeps a copy in the local library.
+///
+/// The copy is written first: if Mojang rejects the file the user still has it
+/// in the grid, and if the upload succeeds they can get back to this exact skin
+/// later without hunting for the PNG again.
 #[tauri::command]
 async fn upload_skin(path: String, variant: String) -> Result<SkinProfile, String> {
+    if let Err(e) = skinlib::store_file(&path, &variant).await {
+        eprintln!("Could not add the skin to the library: {}", e);
+    }
     skin::upload_skin(path, variant).await.map_err(|e| e.to_string())
+}
+
+// ---------------- saved skins ----------------
+
+#[tauri::command]
+async fn list_saved_skins() -> Result<Vec<SavedSkin>, String> {
+    Ok(skinlib::list())
+}
+
+/// Applies a skin from the library. An empty `variant` uses the model the skin
+/// was saved with.
+#[tauri::command]
+async fn apply_saved_skin(id: String, variant: String) -> Result<SkinProfile, String> {
+    let path = skinlib::path_of(&id).map_err(|e| e.to_string())?;
+    let variant = if variant.trim().is_empty() {
+        skinlib::variant_of(&id)
+    } else {
+        variant
+    };
+    skin::upload_skin(path.to_string_lossy().to_string(), variant)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Stores the skin currently on the account, before it gets replaced.
+#[tauri::command]
+async fn save_current_skin(name: String) -> Result<SavedSkin, String> {
+    let profile = skin::get_profile().await.map_err(|e| e.to_string())?;
+    let variant = if profile.variant.eq_ignore_ascii_case("slim") { "slim" } else { "classic" };
+    skinlib::store_url(&profile.skin_url, &name, variant)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn rename_saved_skin(id: String, name: String) -> Result<(), String> {
+    skinlib::rename(&id, &name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_saved_skin(id: String) -> Result<(), String> {
+    skinlib::delete(&id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -662,6 +713,11 @@ fn main() {
             remove_account,
             get_skin_profile,
             upload_skin,
+            list_saved_skins,
+            apply_saved_skin,
+            save_current_skin,
+            rename_saved_skin,
+            delete_saved_skin,
             set_skin_variant,
             set_cape,
             list_versions,

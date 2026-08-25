@@ -12,4 +12,5 @@ pub mod modpack;
 pub mod mods;
 pub mod progress;
 pub mod skin;
+pub mod skinlib;
 pub mod update;

@@ -1,5 +1,5 @@
 import { t, setLanguage, applyTranslations } from "./i18n.js";
-import { renderSkin, renderCape } from "./skinrender.js";
+import { createSkinViewer, renderSkinFlat, renderCape } from "./skinrender.js";
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -330,7 +330,7 @@ function renderSkinView() {
 
   const isSlimModel = (skinProfile.variant || "").toUpperCase() === "SLIM";
   if (skinProfile.skin_url) {
-    renderSkin($("skin-canvas"), skinProfile.skin_url, isSlimModel).catch(() => {
+    skinViewer().setSkin(skinProfile.skin_url, isSlimModel).catch(() => {
       setStatus("skin-status", t("skin_render_failed"), "error");
     });
   }
@@ -341,6 +341,118 @@ function renderSkinView() {
 
   renderCapes();
 }
+
+/**
+ * The 3D preview is built once and kept, so dragging it does not get reset
+ * every time the profile is re-rendered after a cape or model change.
+ */
+let viewer = null;
+function skinViewer() {
+  if (!viewer) viewer = createSkinViewer($("skin-canvas"));
+  return viewer;
+}
+
+/** Everything in the local skin library, newest first. */
+let savedSkins = [];
+
+async function loadSavedSkins() {
+  try {
+    savedSkins = await invoke("list_saved_skins");
+    renderSkinLibrary();
+  } catch (e) {
+    setStatus("skin-status", String(e), "error");
+  }
+}
+
+function renderSkinLibrary() {
+  const grid = $("skin-library");
+  grid.innerHTML = "";
+
+  if (savedSkins.length === 0) {
+    const note = document.createElement("p");
+    note.className = "empty-note";
+    note.textContent = t("skin_library_empty");
+    grid.appendChild(note);
+    return;
+  }
+
+  savedSkins.forEach((skin) => {
+    const item = document.createElement("div");
+    item.className = "skin-item";
+
+    const button = document.createElement("button");
+    button.className = "skin-item-apply";
+    button.title = t("skin_apply_hint", { name: skin.name });
+
+    const thumb = document.createElement("canvas");
+    thumb.className = "skin-thumb";
+    // The PNG arrives as a data URL, so the thumbnail works with no network.
+    renderSkinFlat(thumb, skin.data_url, skin.variant === "slim", 4).catch(() => {});
+
+    const label = document.createElement("span");
+    label.textContent = skin.name;
+
+    button.appendChild(thumb);
+    button.appendChild(label);
+    button.onclick = () => applySavedSkin(skin);
+    item.appendChild(button);
+
+    const del = document.createElement("button");
+    del.className = "skin-item-remove";
+    del.textContent = "×";
+    del.title = t("skin_forget_hint");
+    del.onclick = async (event) => {
+      event.stopPropagation();
+      try {
+        await invoke("delete_saved_skin", { id: skin.id });
+        setStatus("skin-status", t("skin_forgotten", { name: skin.name }), "success");
+        await loadSavedSkins();
+      } catch (e) {
+        setStatus("skin-status", String(e), "error");
+      }
+    };
+    item.appendChild(del);
+
+    // Renaming is the only edit worth having, and a prompt keeps it out of the
+    // way of the one-click apply that the grid is really for.
+    item.ondblclick = async () => {
+      const name = window.prompt(t("skin_rename_prompt"), skin.name);
+      if (name === null) return;
+      try {
+        await invoke("rename_saved_skin", { id: skin.id, name });
+        await loadSavedSkins();
+      } catch (e) {
+        setStatus("skin-status", String(e), "error");
+      }
+    };
+
+    grid.appendChild(item);
+  });
+}
+
+async function applySavedSkin(skin) {
+  setStatus("skin-status", t("skin_uploading", { name: skin.name }));
+  try {
+    skinProfile = await invoke("apply_saved_skin", { id: skin.id, variant: "" });
+    setStatus("skin-status", t("skin_uploaded"), "success");
+    renderSkinView();
+  } catch (e) {
+    setStatus("skin-status", String(e), "error");
+  }
+}
+
+$("btn-save-current-skin").addEventListener("click", async () => {
+  const suggested = skinProfile?.username ? `${skinProfile.username} skin` : "";
+  const name = window.prompt(t("skin_save_prompt"), suggested);
+  if (name === null) return;
+  try {
+    await invoke("save_current_skin", { name });
+    setStatus("skin-status", t("skin_saved"), "success");
+    await loadSavedSkins();
+  } catch (e) {
+    setStatus("skin-status", String(e), "error");
+  }
+});
 
 function renderCapes() {
   const list = $("cape-list");
@@ -390,6 +502,7 @@ async function loadSkinProfile() {
     setStatus("skin-status", "");
     renderSkinView();
     renderAccountList();
+    await loadSavedSkins();
   } catch (e) {
     setStatus("skin-status", String(e), "error");
   }
@@ -403,6 +516,8 @@ async function uploadSkinFile(path) {
     skinProfile = await invoke("upload_skin", { path, variant });
     setStatus("skin-status", t("skin_uploaded"), "success");
     renderSkinView();
+    // The backend filed a copy on the way through, so the grid has a new entry.
+    await loadSavedSkins();
   } catch (e) {
     setStatus("skin-status", String(e), "error");
   }
