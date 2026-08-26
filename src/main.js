@@ -329,10 +329,13 @@ function renderSkinView() {
   $("skin-name").textContent = skinProfile.username;
 
   const isSlimModel = (skinProfile.variant || "").toUpperCase() === "SLIM";
+  const activeCape = skinProfile.capes.find((c) => c.active);
   if (skinProfile.skin_url) {
-    skinViewer().setSkin(skinProfile.skin_url, isSlimModel).catch(() => {
-      setStatus("skin-status", t("skin_render_failed"), "error");
-    });
+    skinViewer()
+      .setSkin(skinProfile.skin_url, isSlimModel, activeCape ? activeCape.url : "")
+      .catch(() => {
+        setStatus("skin-status", t("skin_render_failed"), "error");
+      });
   }
 
   const isSlim = (skinProfile.variant || "").toUpperCase() === "SLIM";
@@ -1951,10 +1954,6 @@ async function installUpdate(info) {
   try {
     var path = await invoke("download_update");
     if (text) text.textContent = t("update_ready");
-
-    // Opening the file runs the installer. If that is refused - blocked, or no
-    // handler - the release page is still one click away, so the update is
-    // never a dead end.
     await shell.open(path);
   } catch (e) {
     if (text) text.textContent = t("update_failed") + " " + String(e);

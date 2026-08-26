@@ -48,6 +48,13 @@ const UV = {
  * mapping wants: the origin is where the top-left texel lands, and the two
  * directions say where the texture's u and v run.
  *
+ * Note that the source rectangles are built from `w/h/d`, the box's *texture*
+ * size, never from its geometric size. Those two are not the same thing: an
+ * overlay layer is drawn slightly larger than the part it covers while still
+ * reading the same 8x8 patch of the sheet. Mixing them up means reading nine
+ * texels where there are eight - or half a texel, for the 0.5-unit layers -
+ * and the box picks up stray pixels from whatever sits next to it in the sheet.
+ *
  * `mirror` flips every face horizontally and swaps left with right, which is
  * how Minecraft builds the missing limbs of a legacy skin.
  */
@@ -85,17 +92,47 @@ function boxFaces(box, mirror) {
 }
 
 /**
+ * Builds one box.
+ *
+ * `grow` inflates the geometry without touching the texture size, which is what
+ * the overlay layers need. `pivot` is the point the box rotates around, given
+ * relative to its own centre - the cape hangs from its top edge, not its middle.
+ */
+function makeBox(opts) {
+  const grow = opts.grow || 0;
+  return {
+    name: opts.name,
+    // Texture size, in texels.
+    w: opts.w,
+    h: opts.h,
+    d: opts.d,
+    // Geometric size, in model units.
+    gw: opts.w + grow,
+    gh: opts.h + grow,
+    gd: opts.d + grow,
+    pos: opts.pos,
+    uv: opts.uv,
+    mirror: opts.mirror || false,
+    layer: opts.layer || 0,
+    tex: opts.tex || "skin",
+    rotX: opts.rotX || 0,
+    rotY: opts.rotY || 0,
+    pivot: opts.pivot || [0, 0, 0],
+  };
+}
+
+/**
  * Builds the body out of boxes. Sizes are Minecraft units with the origin
  * between the feet, so the figure stands from y = 0 to y = 32.
  */
-function buildModel(slim, legacy) {
+function buildModel(slim, legacy, hasCape) {
   const armW = slim ? 3 : 4;
   const armX = 4 + armW / 2;
 
-  const boxes = [
-    { name: "head", w: 8, h: 8, d: 8, pos: [0, 28, 0], uv: UV.head, mirror: false },
-    { name: "body", w: 8, h: 12, d: 4, pos: [0, 18, 0], uv: UV.body, mirror: false },
-    { name: "armR", w: armW, h: 12, d: 4, pos: [-armX, 18, 0], uv: UV.armR, mirror: false },
+  const parts = [
+    { name: "head", w: 8, h: 8, d: 8, pos: [0, 28, 0], uv: UV.head },
+    { name: "body", w: 8, h: 12, d: 4, pos: [0, 18, 0], uv: UV.body },
+    { name: "armR", w: armW, h: 12, d: 4, pos: [-armX, 18, 0], uv: UV.armR },
     {
       name: "armL",
       w: armW, h: 12, d: 4,
@@ -103,7 +140,7 @@ function buildModel(slim, legacy) {
       uv: legacy ? UV.armR : UV.armL,
       mirror: legacy,
     },
-    { name: "legR", w: 4, h: 12, d: 4, pos: [-2, 6, 0], uv: UV.legR, mirror: false },
+    { name: "legR", w: 4, h: 12, d: 4, pos: [-2, 6, 0], uv: UV.legR },
     {
       name: "legL",
       w: 4, h: 12, d: 4,
@@ -115,36 +152,89 @@ function buildModel(slim, legacy) {
 
   // Overlay layers sit slightly outside the base ones, the hat thickest of all
   // - the same proportions Minecraft itself uses.
-  const overlays = [{ base: "head", uv: UV.hat, grow: 1, mirror: false }];
+  const overlays = [{ base: "head", uv: UV.hat, grow: 1 }];
   if (!legacy) {
     overlays.push(
-      { base: "body", uv: UV.bodyOver, grow: 0.5, mirror: false },
-      { base: "armR", uv: UV.armROver, grow: 0.5, mirror: false },
-      { base: "armL", uv: UV.armLOver, grow: 0.5, mirror: false },
-      { base: "legR", uv: UV.legROver, grow: 0.5, mirror: false },
-      { base: "legL", uv: UV.legLOver, grow: 0.5, mirror: false }
+      { base: "body", uv: UV.bodyOver, grow: 0.5 },
+      { base: "armR", uv: UV.armROver, grow: 0.5 },
+      { base: "armL", uv: UV.armLOver, grow: 0.5 },
+      { base: "legR", uv: UV.legROver, grow: 0.5 },
+      { base: "legL", uv: UV.legLOver, grow: 0.5 }
     );
   }
 
-  const all = boxes.map((b) => ({ ...b, layer: 0 }));
+  const boxes = parts.map((p) => makeBox(p));
+
   for (const over of overlays) {
-    const base = boxes.find((b) => b.name === over.base);
+    const base = parts.find((p) => p.name === over.base);
     if (!base) continue;
-    all.push({
-      ...base,
-      name: base.name + "Over",
-      w: base.w + over.grow,
-      h: base.h + over.grow,
-      d: base.d + over.grow,
-      uv: over.uv,
-      mirror: over.mirror,
-      layer: 1,
-    });
+    boxes.push(
+      makeBox({
+        ...base,
+        name: base.name + "Over",
+        uv: over.uv,
+        grow: over.grow,
+        // Overlays of a mirrored limb read from the mirrored slot too, except
+        // on legacy skins, which have no overlay for those limbs at all.
+        mirror: base.mirror,
+        layer: 1,
+      })
+    );
   }
-  return all;
+
+  if (hasCape) {
+    // 10x16x1, hanging off the back of the torso and tilted away from it.
+    // Turned 180 degrees so the printed side of the sheet faces outwards, and
+    // pivoted at its top edge so the tilt swings the hem out rather than
+    // pushing the shoulders through the body.
+    boxes.push(
+      makeBox({
+        name: "cape",
+        w: 10, h: 16, d: 1,
+        pos: [0, 16, -2.5],
+        uv: [0, 0],
+        tex: "cape",
+        rotY: Math.PI,
+        rotX: 0.17,
+        pivot: [0, 8, 0],
+        layer: 0,
+      })
+    );
+  }
+
+  return boxes;
 }
 
 // ---------------- projection ----------------
+
+/**
+ * Places a corner in world space: rotate it around the box's own pivot, then
+ * move it to where the box sits.
+ */
+function placeCorner(local, box) {
+  let [x, y, z] = [
+    local[0] - box.pivot[0],
+    local[1] - box.pivot[1],
+    local[2] - box.pivot[2],
+  ];
+
+  if (box.rotY) {
+    const c = Math.cos(box.rotY);
+    const s = Math.sin(box.rotY);
+    [x, z] = [x * c + z * s, -x * s + z * c];
+  }
+  if (box.rotX) {
+    const c = Math.cos(box.rotX);
+    const s = Math.sin(box.rotX);
+    [y, z] = [y * c - z * s, y * s + z * c];
+  }
+
+  return [
+    x + box.pivot[0] + box.pos[0],
+    y + box.pivot[1] + box.pos[1],
+    z + box.pivot[2] + box.pos[2],
+  ];
+}
 
 /** Orthographic: rotate around Y, then tilt around X, then drop the depth. */
 function project(point, yaw, pitch, scale, cx, cy) {
@@ -173,11 +263,13 @@ function project(point, yaw, pitch, scale, cx, cy) {
  */
 export function createSkinViewer(canvas) {
   const state = {
-    image: null,
+    images: { skin: null, cape: null },
+    /** Cape sheets come in multiples of 64x32, so UVs scale with the file. */
+    texScale: { skin: 1, cape: 1 },
     model: [],
     // Facing the viewer, tilted a few degrees so the figure does not read flat.
     yaw: 0,
-    pitch: -0.12,
+    pitch: 0.12,
     dragging: false,
     lastX: 0,
     lastY: 0,
@@ -204,7 +296,7 @@ export function createSkinViewer(canvas) {
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (!state.image) return;
+    if (!state.images.skin) return;
 
     ctx.imageSmoothingEnabled = false;
 
@@ -215,12 +307,20 @@ export function createSkinViewer(canvas) {
 
     const quads = [];
     for (const box of state.model) {
+      const image = state.images[box.tex];
+      if (!image) continue;
+      const ts = state.texScale[box.tex];
+
       for (const face of boxFaces(box, box.mirror)) {
-        const corner = (fu, fv) => [
-          box.pos[0] + (face.o[0] + face.du[0] * fu + face.dv[0] * fv) * box.w,
-          box.pos[1] + (face.o[1] + face.du[1] * fu + face.dv[1] * fv) * box.h,
-          box.pos[2] + (face.o[2] + face.du[2] * fu + face.dv[2] * fv) * box.d,
-        ];
+        const corner = (fu, fv) =>
+          placeCorner(
+            [
+              (face.o[0] + face.du[0] * fu + face.dv[0] * fv) * box.gw,
+              (face.o[1] + face.du[1] * fu + face.dv[1] * fv) * box.gh,
+              (face.o[2] + face.du[2] * fu + face.dv[2] * fv) * box.gd,
+            ],
+            box
+          );
 
         const a = project(corner(0, 0), state.yaw, state.pitch, scale, cx, cy);
         const b = project(corner(1, 0), state.yaw, state.pitch, scale, cx, cy);
@@ -235,7 +335,10 @@ export function createSkinViewer(canvas) {
 
         quads.push({
           a, b, d,
-          s: face.s,
+          image,
+          // Scaled here rather than at draw time, so a 128x64 cape sheet works
+          // without every consumer knowing about it.
+          s: face.s.map((n) => n * ts),
           depth: (a.depth + b.depth + c.depth + d.depth) / 4,
           layer: box.layer,
         });
@@ -266,7 +369,7 @@ export function createSkinViewer(canvas) {
       const gy = (sh + grow * 2) / sh;
 
       ctx.setTransform(ax * gx, ay * gx, bx * gy, by * gy, ox, oy);
-      ctx.drawImage(state.image, sx, sy, sw, sh, 0, 0, sw, sh);
+      ctx.drawImage(quad.image, sx, sy, sw, sh, 0, 0, sw, sh);
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
@@ -318,7 +421,7 @@ export function createSkinViewer(canvas) {
   canvas.addEventListener("pointerleave", onUp);
   canvas.addEventListener("dblclick", () => {
     state.yaw = 0;
-    state.pitch = -0.12;
+    state.pitch = 0.12;
     schedule();
   });
 
@@ -326,16 +429,30 @@ export function createSkinViewer(canvas) {
   window.addEventListener("resize", onResize);
 
   return {
-    /** Points the viewer at a texture. Rotation survives a skin change. */
-    async setSkin(imageUrl, slim = false) {
-      const image = await loadImage(imageUrl);
-      state.image = image;
-      state.model = buildModel(slim, image.height === 32);
+    /**
+     * Points the viewer at a skin, and optionally at the cape that is active.
+     * Rotation survives the change, so switching cape does not snap the model
+     * back to front-on while the user is looking at the back of it.
+     */
+    async setSkin(imageUrl, slim = false, capeUrl = "") {
+      const skin = await loadImage(imageUrl);
+      state.images.skin = skin;
+      state.texScale.skin = skin.width / 64;
+
+      // A cape that fails to load is not worth failing the whole preview over.
+      let cape = null;
+      if (capeUrl) {
+        cape = await loadImage(capeUrl).catch(() => null);
+      }
+      state.images.cape = cape;
+      state.texScale.cape = cape ? cape.width / 64 : 1;
+
+      state.model = buildModel(slim, skin.height === 32, !!cape);
       schedule();
     },
     reset() {
       state.yaw = 0;
-      state.pitch = -0.12;
+      state.pitch = 0.12;
       schedule();
     },
     redraw: schedule,
