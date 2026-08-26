@@ -1954,7 +1954,10 @@ async function installUpdate(info) {
   try {
     var path = await invoke("download_update");
     if (text) text.textContent = t("update_ready");
-    await shell.open(path);
+
+    // Started on the Rust side: the shell plugin only opens URLs, and a local
+    // file path is rejected by its scope check.
+    await invoke("run_installer", { path: path });
   } catch (e) {
     if (text) text.textContent = t("update_failed") + " " + String(e);
     if (info && info.release_url) {

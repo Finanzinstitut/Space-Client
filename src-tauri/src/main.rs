@@ -95,6 +95,22 @@ async fn download_update() -> Result<String, String> {
     update::download_update().await.map_err(|e| e.to_string())
 }
 
+/// Starts the downloaded installer and steps aside so it can replace us.
+#[tauri::command]
+async fn run_installer(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    update::run_installer(&path).map_err(|e| e.to_string())?;
+
+    // The installer cannot overwrite files this process holds open, so the
+    // launcher closes itself a moment after handing over. The delay is there
+    // so the installer is genuinely up before its parent disappears.
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+        app.exit(0);
+    });
+
+    Ok(())
+}
+
 // ---------------- accounts ----------------
 
 #[tauri::command]
@@ -710,6 +726,7 @@ fn main() {
             set_settings,
             check_update,
             download_update,
+            run_installer,
             get_account,
             start_login,
             complete_login,

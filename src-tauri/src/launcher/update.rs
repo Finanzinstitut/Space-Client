@@ -154,3 +154,23 @@ pub async fn download_update() -> anyhow::Result<String> {
 
     Ok(target.to_string_lossy().to_string())
 }
+
+/// Starts a downloaded installer.
+///
+/// Done here rather than through the shell plugin because that plugin only
+/// opens things that look like URLs - a local path fails its scope check, which
+/// is exactly the sort of guard you want on a call that can open anything a web
+/// page hands it. Launching a file we just downloaded ourselves is a different
+/// matter, and belongs on this side of the boundary.
+pub fn run_installer(path: &str) -> anyhow::Result<()> {
+    let file = std::path::Path::new(path);
+    if !file.exists() {
+        anyhow::bail!("The downloaded installer is no longer at {}", path);
+    }
+
+    std::process::Command::new(file)
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("Could not start the installer: {}", e))?;
+
+    Ok(())
+}
