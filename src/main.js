@@ -62,21 +62,28 @@ function renderInstances() {
         ? "Vanilla"
         : inst.loader.charAt(0).toUpperCase() + inst.loader.slice(1);
 
+    // Structure only. The name and path were already set as text below, but
+    // the version, loader and memory were interpolated straight into markup -
+    // and those come out of an instance file, which is a thing on disk that
+    // anything can write to. Same treatment for all of them.
     card.innerHTML = `
       <div class="instance-main">
         <div class="instance-orb"></div>
         <div>
           <div class="instance-name"></div>
           <div class="instance-meta">
-            <span class="tag">${inst.mc_version}</span>
-            <span class="tag">${loaderLabel}</span>
-            <span class="tag">${inst.ram_mb} MB</span>
+            <span class="tag tag-version"></span>
+            <span class="tag tag-loader"></span>
+            <span class="tag tag-ram"></span>
           </div>
           <div class="instance-path"></div>
         </div>
       </div>
       <div class="instance-actions"></div>
     `;
+    card.querySelector(".tag-version").textContent = inst.mc_version;
+    card.querySelector(".tag-loader").textContent = loaderLabel;
+    card.querySelector(".tag-ram").textContent = inst.ram_mb + " MB";
     card.querySelector(".instance-name").textContent = inst.name;
     card.querySelector(".instance-path").textContent = inst.path;
 
@@ -1952,12 +1959,14 @@ async function installUpdate(info) {
   if (text) text.textContent = t("update_downloading");
 
   try {
-    var path = await invoke("download_update");
+    // The path comes back for the message only; the Rust side keeps its own
+    // copy and starts that, so nothing here can redirect what gets executed.
+    await invoke("download_update");
     if (text) text.textContent = t("update_ready");
 
     // Started on the Rust side: the shell plugin only opens URLs, and a local
     // file path is rejected by its scope check.
-    await invoke("run_installer", { path: path });
+    await invoke("run_installer");
   } catch (e) {
     if (text) text.textContent = t("update_failed") + " " + String(e);
     if (info && info.release_url) {

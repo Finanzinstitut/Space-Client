@@ -147,28 +147,143 @@ pub async fn download_update() -> anyhow::Result<String> {
 
     let bytes = client.get(link).send().await?.bytes().await?;
 
-    // Written beside the temp directory rather than into the install folder,
-    // which the running launcher holds open on Windows.
-    let target = std::env::temp_dir().join(name);
+    // Checked before it is written, not after. An installer that fails its
+    // hash should never exist on disk in the first place - once it is there,
+    // something else can start it.
+    verify_download(&client, assets, name, &bytes).await?;
+
+    // Written into a directory of our own inside temp rather than temp itself.
+    // Temp is world writable, so a file placed there under a predictable name
+    // can be swapped between the write and the launch by anything else running
+    // on the machine.
+    let dir = std::env::temp_dir().join("space-client-update");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir)?;
+
+    let target = dir.join(name);
     std::fs::write(&target, &bytes)?;
+
+    // Remembered here rather than handed to the page and taken back. The
+    // caller used to pass the path in, which meant anything able to reach the
+    // command could ask the launcher to execute an arbitrary file.
+    *staged().lock().unwrap() = Some(target.clone());
 
     Ok(target.to_string_lossy().to_string())
 }
 
-/// Starts a downloaded installer.
+/// The installer this process downloaded and checked, if any.
+fn staged() -> &'static std::sync::Mutex<Option<std::path::PathBuf>> {
+    static STAGED: std::sync::OnceLock<std::sync::Mutex<Option<std::path::PathBuf>>> =
+        std::sync::OnceLock::new();
+    STAGED.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Checks the download against published hashes.
+///
+/// GitHub does not sign release assets, so the strongest thing available
+/// without running a signing key is a checksum file published alongside them.
+/// If one is there the download has to match it; if none is there this says so
+/// and continues, because refusing every update until the release process
+/// changes would leave people stranded on old builds.
+///
+/// Real signing is the proper answer and this is not it. It does close the
+/// case where a release asset is replaced without the checksum being updated
+/// too, which is the difference between one thing to compromise and two.
+async fn verify_download(
+    client: &reqwest::Client,
+    assets: &[serde_json::Value],
+    name: &str,
+    bytes: &[u8],
+) -> anyhow::Result<()> {
+    let sums = assets.iter().find(|a| {
+        a.get("name")
+            .and_then(|n| n.as_str())
+            .map(|n| {
+                let lower = n.to_lowercase();
+                lower == "sha256sums" || lower == "sha256sums.txt"
+            })
+            .unwrap_or(false)
+    });
+
+    let sums = match sums {
+        Some(entry) => entry,
+        None => {
+            eprintln!(
+                "space-client: release publishes no SHA256SUMS, installing {} unverified",
+                name
+            );
+            return Ok(());
+        }
+    };
+
+    let link = sums
+        .get("browser_download_url")
+        .and_then(|u| u.as_str())
+        .ok_or_else(|| anyhow::anyhow!("The checksum file has no download link"))?;
+
+    let text = client.get(link).send().await?.text().await?;
+
+    let expected = text
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let hash = parts.next()?;
+            let file = parts.next()?.trim_start_matches('*');
+            Some((file.to_string(), hash.to_lowercase()))
+        })
+        .find(|(file, _)| file == name)
+        .map(|(_, hash)| hash);
+
+    let expected = match expected {
+        Some(hash) => hash,
+        None => anyhow::bail!(
+            "The release publishes checksums but none for {} - refusing to install it",
+            name
+        ),
+    };
+
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let actual = hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+
+    if actual != expected {
+        anyhow::bail!(
+            "The downloaded installer does not match its published checksum - not installing it"
+        );
+    }
+
+    Ok(())
+}
+
+/// Starts the installer this process downloaded and verified.
 ///
 /// Done here rather than through the shell plugin because that plugin only
 /// opens things that look like URLs - a local path fails its scope check, which
 /// is exactly the sort of guard you want on a call that can open anything a web
 /// page hands it. Launching a file we just downloaded ourselves is a different
 /// matter, and belongs on this side of the boundary.
-pub fn run_installer(path: &str) -> anyhow::Result<()> {
-    let file = std::path::Path::new(path);
+pub fn run_installer() -> anyhow::Result<()> {
+    // No path argument on purpose. It used to take one from the page, which
+    // made this a command for running any file on the machine - the download
+    // step was only a suggestion. Now it can start exactly one thing: the
+    // installer this process fetched and checked in this session.
+    let staged = staged().lock().unwrap().clone();
+
+    let file = match staged {
+        Some(path) => path,
+        None => anyhow::bail!("There is no checked installer to start - download it first"),
+    };
+
     if !file.exists() {
-        anyhow::bail!("The downloaded installer is no longer at {}", path);
+        anyhow::bail!("The downloaded installer is no longer there");
     }
 
-    std::process::Command::new(file)
+    std::process::Command::new(&file)
         .spawn()
         .map_err(|e| anyhow::anyhow!("Could not start the installer: {}", e))?;
 

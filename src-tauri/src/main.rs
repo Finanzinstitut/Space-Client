@@ -97,8 +97,11 @@ async fn download_update() -> Result<String, String> {
 
 /// Starts the downloaded installer and steps aside so it can replace us.
 #[tauri::command]
-async fn run_installer(path: String, app: tauri::AppHandle) -> Result<(), String> {
-    update::run_installer(&path).map_err(|e| e.to_string())?;
+async fn run_installer(app: tauri::AppHandle) -> Result<(), String> {
+    // Takes no path. The installer to start is the one download_update
+    // fetched and checked; letting the page name the file made this a
+    // "run anything" command with a download step attached.
+    update::run_installer().map_err(|e| e.to_string())?;
 
     // The installer cannot overwrite files this process holds open, so the
     // launcher closes itself a moment after handing over. The delay is there
