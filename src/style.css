@@ -882,3 +882,25 @@ input.grow { flex: 1; }
 /* A disabled mod stays visible but reads as parked rather than active. */
 .mod-card.is-disabled { opacity: .55; border-style: dashed; }
 .mod-card.is-disabled .mod-icon { filter: grayscale(1); }
+
+
+/*
+  Sidebar group headings.
+
+  Uses the palette that is already here - no new colour is introduced. Small,
+  spaced and dim on purpose: a heading that competes with the entries under it
+  has made the list harder to read rather than easier.
+*/
+.nav-group {
+  margin: 14px 0 4px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  opacity: 0.55;
+}
+
+.nav-group:first-child {
+  margin-top: 2px;
+}

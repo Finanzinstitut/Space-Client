@@ -14,35 +14,131 @@ let allVersions = [];
 let instances = [];
 let pendingLogin = null;
 
+// ---------------- the opening ----------------
+
+/*
+ * A greeting, the time, then the app.
+ *
+ * Written from script rather than baked into the page because it says your name
+ * and the current time, and a launcher that greets you with yesterday's clock is
+ * worse than one that greets you with nothing. It dismisses itself on a timer
+ * and on the first click, whichever comes first - somebody who opens this to
+ * press Play twice a day should never be made to watch it.
+ */
+function runIntro() {
+  const intro = document.getElementById("intro");
+  if (!intro) return;
+
+  const clock = document.getElementById("intro-clock");
+  if (clock) {
+    clock.textContent = new Date().toLocaleString(undefined, {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  const dismiss = () => intro.classList.add("done");
+
+  // Long enough to read, short enough not to be a toll gate
+  const timer = setTimeout(dismiss, 1700);
+  intro.addEventListener("click", () => {
+    clearTimeout(timer);
+    dismiss();
+  });
+}
+
+/** Puts the account name into the greeting once it is known. */
+function introGreeting(name) {
+  const line = document.getElementById("intro-greeting");
+  if (!line) return;
+
+  const hour = new Date().getHours();
+  const part =
+    hour < 5 ? "Still up" :
+    hour < 12 ? "Good morning" :
+    hour < 18 ? "Good afternoon" : "Good evening";
+
+  line.textContent = name ? part + ", " + name : part;
+}
+
+/** What the opening says it is doing, so the wait is accounted for. */
+function introStep(text) {
+  const step = document.getElementById("intro-step");
+  if (step) step.textContent = text;
+}
+
+runIntro();
+
 // ---------------- navigation ----------------
 document.querySelectorAll(".nav-item").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".nav-item").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
-    btn.classList.add("active");
-    $("view-" + btn.dataset.view).classList.add("active");
-  });
+  btn.addEventListener("click", () => showView(btn.dataset.view));
 });
 
+/*
+ * One way in and out of a view, for both the sidebar and anything that jumps
+ * you somewhere - they used to do the same work twice with slightly different
+ * code, which is how one of them ends up missing a step later.
+ */
 function showView(name) {
+  const target = document.getElementById("view-" + name);
+  if (!target || target.classList.contains("active")) return;
+
   document.querySelectorAll(".nav-item").forEach((b) =>
     b.classList.toggle("active", b.dataset.view === name)
   );
   document.querySelectorAll(".view").forEach((v) =>
     v.classList.toggle("active", v.id === "view-" + name)
   );
+
+  // The view animates itself in; its contents follow one after another
+  stagger(target.querySelectorAll(".instance-card, .mod-card, .account-row"));
+}
+
+/*
+ * Makes a set of elements arrive in turn.
+ *
+ * Capped on purpose. Past about a dozen the delay stops growing, because a list
+ * of forty that takes two seconds to finish appearing is a list you are waiting
+ * for rather than one that feels alive.
+ */
+function stagger(nodes, step = 35) {
+  let i = 0;
+  nodes.forEach((node) => {
+    node.classList.remove("stagger-in");
+    // Forces the browser to notice the class went away, so re-entering a view
+    // replays the arrival instead of doing nothing
+    void node.offsetWidth;
+    node.style.setProperty("--stagger-delay", Math.min(i, 12) * step + "ms");
+    node.classList.add("stagger-in");
+    i++;
+  });
 }
 
 function setStatus(el, msg, kind = "") {
   const node = $(el);
+  const changed = node.textContent !== msg;
+
   node.textContent = msg;
   node.className = "status-line " + kind;
+
+  // Only when it actually says something new. Replaying the flash on every
+  // repaint would make a line that updates twice a second impossible to read.
+  if (changed && msg) {
+    node.classList.remove("changed");
+    void node.offsetWidth;
+    node.classList.add("changed");
+  }
 }
 
 // ---------------- instances ----------------
 function renderInstances() {
   const list = $("instance-list");
   list.innerHTML = "";
+  // Filled below, then handed to stagger at the end so the cards arrive in
+  // order rather than all at once the moment the list is replaced
 
   if (instances.length === 0) {
     const empty = document.createElement("p");
@@ -141,6 +237,8 @@ function renderInstances() {
 
     list.appendChild(card);
   });
+
+  stagger(list.querySelectorAll(".instance-card"));
 }
 
 async function refreshInstances() {
@@ -260,6 +358,8 @@ function renderAccountList() {
     row.appendChild(actions);
     list.appendChild(row);
   });
+
+  stagger($("account-list").querySelectorAll(".account-row"));
 }
 
 async function switchAccount(entry) {
@@ -438,6 +538,8 @@ function renderSkinLibrary() {
 
     grid.appendChild(item);
   });
+
+  stagger($("skin-library").querySelectorAll(".skin-item"));
 }
 
 async function applySavedSkin(skin) {
@@ -1194,6 +1296,7 @@ function renderAccount() {
     $("account-signed-out").classList.add("hidden");
     $("account-username").textContent = account.username;
     $("account-name").textContent = account.username;
+    introGreeting(account.username);
     $("account-badge").classList.toggle("hidden", !account.offline);
 
     // Offline profiles have no Mojang skin to look up
@@ -1212,6 +1315,7 @@ function renderAccount() {
     $("account-signed-in").classList.add("hidden");
     $("account-signed-out").classList.remove("hidden");
     $("account-name").textContent = t("not_signed_in");
+    introGreeting(null);
     $("account-dot").classList.remove("online", "offline");
     $("account-badge").classList.add("hidden");
   }

@@ -4,8 +4,24 @@
   <meta charset="UTF-8" />
   <title>Space Client</title>
   <link rel="stylesheet" href="style.css" />
+  <!-- Loaded after style.css so it can refine movement without redefining
+       layout or a single colour. -->
+  <link rel="stylesheet" href="motion.css" />
 </head>
 <body>
+  <!--
+    The opening. Covers the launcher's slowest moment - reading accounts,
+    checking for an update, listing instances - which used to be a half drawn
+    window. Filled in and dismissed from script; static here so it paints on
+    the very first frame rather than after the JavaScript has parsed.
+  -->
+  <div id="intro">
+    <div class="intro-orb"></div>
+    <div class="intro-greeting" id="intro-greeting">Welcome back</div>
+    <div class="intro-clock" id="intro-clock"></div>
+    <div class="intro-step" id="intro-step">Starting up</div>
+  </div>
+
   <div class="stars"></div>
   <div class="stars2"></div>
   <div class="planet-glow"></div>
@@ -16,11 +32,22 @@
         <div class="logo-orb"></div>
         <span>SPACE CLIENT</span>
       </div>
+      <!--
+        Grouped rather than listed flat. Five entries of equal weight means
+        reading all five to find one; three small headings mean reading one word
+        and then two entries. The order follows why the launcher gets opened -
+        to play, then to change what you play with, then everything else.
+      -->
       <nav>
+        <div class="nav-group">Play</div>
         <button class="nav-item active" data-view="instances">🚀 <span data-i18n="nav_instances"></span></button>
         <button class="nav-item" data-view="mods">🛰️ <span data-i18n="nav_mods"></span></button>
+
+        <div class="nav-group">You</div>
         <button class="nav-item" data-view="skin">🧍 <span data-i18n="nav_skin"></span></button>
         <button class="nav-item" data-view="account">👤 <span data-i18n="nav_account"></span></button>
+
+        <div class="nav-group">Client</div>
         <button class="nav-item" data-view="settings">⚙️ <span data-i18n="nav_settings"></span></button>
       </nav>
       <div class="account-chip" id="account-chip">
