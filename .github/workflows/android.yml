@@ -1,5 +1,11 @@
 name: Build Space Client for Android
 
+# Only when the Android side changes, or on request.
+#
+# Kept separate from build.yml on purpose: the desktop build takes a Rust
+# toolchain and several minutes on two platforms, and rebuilding it because a
+# Kotlin file moved would waste that every time. The two never need to run
+# together - a phone build does not produce a Windows exe and should not try.
 on:
   push:
     branches: [main]
@@ -28,6 +34,10 @@ jobs:
 
       - name: Build the APK
         working-directory: android
+        # Debug rather than release: a release build wants a signing key, and
+        # an unsigned release APK will not install at all. Debug installs and
+        # runs, which is what a build meant for finding out whether this works
+        # needs to do.
         run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Name it after the run
