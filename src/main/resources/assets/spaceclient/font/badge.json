@@ -1,0 +1,43 @@
+{
+  "_comment": [
+    "Four glyphs in one font, so a rank is a change of character rather than",
+    "a change of font. The code points sit in the private use area, which is",
+    "the range set aside for exactly this - nothing else will ever claim them.",
+    "",
+    "E000 standard, E001 developer, E002 owner, E003 vip.",
+    "",
+    "height 8 matches a line of name tag text. ascent 7 drops the glyph one",
+    "pixel below the text baseline, which is what lines the middle of the",
+    "planet up with the middle of the letters instead of its top edge."
+  ],
+  "providers": [
+    {
+      "type": "bitmap",
+      "file": "spaceclient:font/badge.png",
+      "height": 8,
+      "ascent": 7,
+      "chars": ["\uE000"]
+    },
+    {
+      "type": "bitmap",
+      "file": "spaceclient:font/badge_dev.png",
+      "height": 8,
+      "ascent": 7,
+      "chars": ["\uE001"]
+    },
+    {
+      "type": "bitmap",
+      "file": "spaceclient:font/badge_owner.png",
+      "height": 8,
+      "ascent": 7,
+      "chars": ["\uE002"]
+    },
+    {
+      "type": "bitmap",
+      "file": "spaceclient:font/badge_vip.png",
+      "height": 8,
+      "ascent": 7,
+      "chars": ["\uE003"]
+    }
+  ]
+}

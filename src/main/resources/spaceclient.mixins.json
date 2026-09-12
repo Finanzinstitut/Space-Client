@@ -1,0 +1,21 @@
+{
+  "required": false,
+  "package": "gg.spaceclient.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "CameraMixin",
+    "LevelRendererMixin",
+    "AvatarRendererMixin",
+    "GuiItemInvoker",
+    "EntityRendererMixin",
+    "PauseScreenMixin",
+    "MinecraftServerMixin",
+    "ItemEntityRenderStateMixin",
+    "ItemEntityRendererMixin",
+    "ItemInHandRendererMixin",
+    "GuiItemScaleMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}
