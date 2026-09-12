@@ -1,5 +1,4 @@
-.gradle/
-build/
-run/
-.idea/
-*.iml
+/src-tauri/target/
+/src-tauri/gen/
+node_modules/
+.DS_Store

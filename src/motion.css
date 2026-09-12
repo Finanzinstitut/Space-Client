@@ -1,0 +1,349 @@
+/*
+  Motion for Space Client.
+
+  Kept in its own file rather than folded into style.css. That file is eight
+  hundred lines of layout that works, and the fastest way to break a working
+  interface is to edit it everywhere at once to add something orthogonal. This
+  loads after it and only touches movement - no colours are defined here at all,
+  which is the other half of the promise: the palette stays exactly as it was.
+
+  Two rules the whole file follows:
+
+  Things enter from where they came from and leave the way they arrived. A panel
+  that slides in from the right and fades out downwards reads as two different
+  objects; the same panel going back the way it came reads as one you put away.
+
+  Nothing takes longer than a third of a second. An interface is used hundreds
+  of times, and the second time you see an animation you are already waiting for
+  it to end.
+*/
+
+:root {
+  /* One curve for almost everything: quick to leave, slow to settle. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  --fast: 140ms;
+  --normal: 240ms;
+  --slow: 360ms;
+}
+
+/*
+  Anyone who has asked the system for less movement gets none of this.
+  Not reduced - none. Vestibular trouble is not helped by a shorter slide, and
+  the interface works perfectly without any of it.
+*/
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------- the opening ---------------- */
+
+/*
+  A short greeting before the app appears.
+
+  It covers the moment the launcher is doing its slowest work anyway - reading
+  accounts, checking for an update, listing instances - so it costs nothing in
+  practice and replaces a window that would otherwise pop up half drawn.
+*/
+#intro {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--bg-deep);
+  transition: opacity var(--slow) var(--ease-in-out),
+              visibility var(--slow) var(--ease-in-out);
+}
+
+#intro.done {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+#intro .intro-orb {
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, var(--accent-2), var(--accent) 70%);
+  box-shadow: 0 0 40px color-mix(in srgb, var(--accent) 60%, transparent);
+  animation: intro-orb 900ms var(--ease-out) both;
+}
+
+@keyframes intro-orb {
+  from { transform: scale(0.4); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+
+#intro .intro-greeting {
+  margin-top: 18px;
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--text);
+  animation: rise-in 700ms var(--ease-out) 220ms both;
+}
+
+#intro .intro-clock {
+  font-size: 15px;
+  color: var(--text-dim);
+  animation: rise-in 700ms var(--ease-out) 380ms both;
+}
+
+#intro .intro-step {
+  margin-top: 20px;
+  font-size: 12px;
+  color: var(--text-dim);
+  opacity: 0.7;
+  animation: rise-in 700ms var(--ease-out) 520ms both;
+}
+
+@keyframes rise-in {
+  from { transform: translateY(10px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* The app itself arrives once the greeting steps aside. */
+.app {
+  animation: app-in var(--slow) var(--ease-out) both;
+}
+
+@keyframes app-in {
+  from { transform: scale(0.99); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+
+/* ---------------- switching views ---------------- */
+
+/*
+  The old switch was display none to block, which is instant and reads as the
+  window being replaced rather than the content changing. Views now cross over:
+  the outgoing one is gone before the incoming one is legible, so the two never
+  overlap as readable text.
+*/
+.view {
+  display: none;
+}
+
+.view.active {
+  display: block;
+  animation: view-in var(--normal) var(--ease-out) both;
+}
+
+@keyframes view-in {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0);   opacity: 1; }
+}
+
+/* ---------------- the sidebar ---------------- */
+
+/*
+  A marker that travels between entries instead of appearing under the new one.
+  It is the only thing on screen that says where you are, and a mark that jumps
+  makes you find it again every time.
+*/
+.sidebar nav {
+  position: relative;
+}
+
+.nav-item {
+  position: relative;
+  transition: color var(--fast) var(--ease-out),
+              background var(--fast) var(--ease-out),
+              transform var(--fast) var(--ease-out);
+}
+
+.nav-item:hover {
+  transform: translateX(2px);
+}
+
+.nav-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 3px;
+  height: 0;
+  border-radius: 2px;
+  background: var(--accent-2);
+  transform: translateY(-50%);
+  transition: height var(--normal) var(--ease-out);
+}
+
+.nav-item.active::before {
+  height: 60%;
+}
+
+/* Each entry arrives in turn when the window opens. */
+.sidebar nav .nav-item {
+  animation: rise-in 400ms var(--ease-out) both;
+}
+
+/*
+  Counted by element type, not by position. The group headings sit between the
+  buttons, so nth-child would count them too and leave gaps in the sequence -
+  entries would arrive with a stutter for no visible reason.
+*/
+.sidebar nav .nav-item:nth-of-type(1) { animation-delay: 60ms; }
+.sidebar nav .nav-item:nth-of-type(2) { animation-delay: 100ms; }
+.sidebar nav .nav-item:nth-of-type(3) { animation-delay: 140ms; }
+.sidebar nav .nav-item:nth-of-type(4) { animation-delay: 180ms; }
+.sidebar nav .nav-item:nth-of-type(5) { animation-delay: 220ms; }
+.sidebar nav .nav-item:nth-of-type(6) { animation-delay: 260ms; }
+
+.sidebar nav .nav-group {
+  animation: rise-in 400ms var(--ease-out) both;
+  animation-delay: 40ms;
+}
+
+.logo-orb {
+  transition: transform var(--slow) var(--ease-out);
+}
+
+.sidebar:hover .logo-orb {
+  transform: rotate(18deg) scale(1.06);
+}
+
+/* ---------------- lists ---------------- */
+
+/*
+  Rows and cards come in one after another rather than all at once.
+
+  The delay is set from script, because how many there are is not known here -
+  and past about a dozen it stops: a list of forty that takes two seconds to
+  finish arriving is a list you are waiting for.
+*/
+.stagger-in {
+  animation: card-in 320ms var(--ease-out) both;
+  animation-delay: var(--stagger-delay, 0ms);
+}
+
+@keyframes card-in {
+  from { transform: translateY(12px) scale(0.985); opacity: 0; }
+  to   { transform: translateY(0)    scale(1);     opacity: 1; }
+}
+
+/*
+  Cards lift towards the cursor.
+
+  Only a little, and with a shadow rather than a border change, so a row of them
+  at rest stays flat and the one under the pointer is unmistakably the one.
+*/
+.instance-card,
+.mod-card,
+.account-row,
+.skin-item {
+  transition: transform var(--fast) var(--ease-out),
+              box-shadow var(--fast) var(--ease-out),
+              border-color var(--fast) var(--ease-out);
+  will-change: transform;
+}
+
+.instance-card:hover,
+.mod-card:hover,
+.account-row:hover,
+.skin-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px #00000055;
+}
+
+.instance-card:active,
+.mod-card:active,
+.account-row:active,
+.skin-item:active {
+  transform: translateY(0);
+  transition-duration: 60ms;
+}
+
+/* ---------------- buttons ---------------- */
+
+button {
+  transition: transform var(--fast) var(--ease-out),
+              background var(--fast) var(--ease-out),
+              border-color var(--fast) var(--ease-out),
+              opacity var(--fast) var(--ease-out);
+}
+
+button:not(:disabled):active {
+  transform: scale(0.97);
+  transition-duration: 60ms;
+}
+
+button:disabled {
+  transform: none;
+}
+
+/*
+  The primary action breathes while something is running.
+
+  Deliberately slow and shallow. A spinner says "wait"; this says "still going"
+  without taking attention away from whatever else is on screen.
+*/
+.btn-primary.working {
+  animation: breathe 2.4s var(--ease-in-out) infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.72; }
+}
+
+/* ---------------- progress ---------------- */
+
+.progress-bar > span,
+.progress > span {
+  transition: width var(--normal) var(--ease-out);
+}
+
+/* ---------------- dialogs ---------------- */
+
+.modal,
+.dialog,
+.overlay {
+  animation: fade-in var(--fast) var(--ease-out) both;
+}
+
+.modal > *,
+.dialog > * {
+  animation: pop-in var(--normal) var(--ease-out) both;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes pop-in {
+  from { transform: translateY(12px) scale(0.98); opacity: 0; }
+  to   { transform: translateY(0)    scale(1);    opacity: 1; }
+}
+
+/* ---------------- status lines ---------------- */
+
+/*
+  A status that changes should be noticed without being shouted. One short
+  fade is enough to catch the eye on a line that was already there.
+*/
+.status-line {
+  transition: color var(--fast) var(--ease-out);
+}
+
+.status-line.changed {
+  animation: flash-in var(--normal) var(--ease-out);
+}
+
+@keyframes flash-in {
+  from { transform: translateY(-3px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
