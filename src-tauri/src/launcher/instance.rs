@@ -36,6 +36,12 @@ pub struct Instance {
     pub install_client_mod: bool,
     #[serde(default)]
     pub created: String,
+    /// When this instance was last launched, as seconds since the epoch.
+    /// Zero for one that has never run, which sorts it below everything that
+    /// has - a list that opens on what you played last is worth more than one
+    /// that opens on whatever happened to be written first.
+    #[serde(default)]
+    pub last_played: u64,
 }
 
 impl Instance {
@@ -211,6 +217,8 @@ pub fn create(
         ram_mb,
         install_client_mod,
         created: format!("{}", chrono_now()),
+        // Never launched yet, so it sorts below anything that has.
+        last_played: 0,
     };
 
     // A copy of the metadata lives inside the folder too, so an instance
@@ -248,4 +256,26 @@ fn chrono_now() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Stamps an instance as just launched.
+///
+/// Written through the registry rather than held in memory: the ordering has to
+/// survive closing the launcher, which is the case it exists for.
+pub fn mark_played(id: &str) {
+    let mut all = load_all();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut touched = false;
+    for inst in all.iter_mut() {
+        if inst.id == id {
+            inst.last_played = now;
+            touched = true;
+        }
+    }
+    if touched {
+        let _ = save_all(&all);
+    }
 }

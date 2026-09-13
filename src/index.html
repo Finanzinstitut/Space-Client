@@ -61,9 +61,36 @@
     <main class="content">
       <!-- INSTANCES -->
       <section id="view-instances" class="view active">
+        <!--
+          The opening screen answers one question - press this to play - and
+          everything else waits below it. The figure is you: the skin the game
+          will actually start with, turning on its own, because a launcher that
+          shows you nothing of yourself is a file manager with a wallpaper.
+        -->
+        <div class="hero">
+          <div class="hero-figure">
+            <canvas id="home-skin"></canvas>
+          </div>
+
+          <div class="hero-main">
+            <div class="hero-eyebrow" id="home-greeting"></div>
+            <h1 class="hero-name" id="home-player">—</h1>
+
+            <label class="hero-label" data-i18n="home_playing"></label>
+            <select id="home-instance" class="hero-select"></select>
+            <div class="hero-meta" id="home-meta"></div>
+
+            <button id="btn-play" class="play-btn">
+              <span class="play-glyph">▶</span>
+              <span data-i18n="btn_play"></span>
+            </button>
+            <div class="hero-note" id="home-note"></div>
+          </div>
+        </div>
+
         <div class="head-row">
           <div>
-            <h1 data-i18n="instances_title"></h1>
+            <h2 class="section-title" data-i18n="instances_title"></h2>
             <p class="subtitle" data-i18n="instances_sub"></p>
           </div>
           <div class="head-actions">
@@ -71,7 +98,7 @@
               <span class="run-dot"></span>
               <span id="btn-running-label"></span>
             </button>
-            <button id="btn-import-modpack" class="btn secondary" data-i18n="btn_import"></button>
+            <button id="btn-toggle-import" class="btn secondary" data-i18n="btn_import"></button>
             <button id="btn-new-instance" class="btn primary" data-i18n="btn_new_instance"></button>
           </div>
         </div>
@@ -82,20 +109,29 @@
           <div id="running-list" class="running-list"></div>
         </div>
 
-        <div id="drop-zone" class="drop-zone">
-          <span>📦</span>
-          <span data-i18n="import_hint"></span>
+        <!--
+          Folded away until asked for. Importing a modpack happens once in a
+          while; it used to occupy the best space on the screen permanently,
+          above the instances it is meant to produce.
+        -->
+        <div id="import-area" class="import-area hidden">
+          <div id="drop-zone" class="drop-zone">
+            <span>📦</span>
+            <span data-i18n="import_hint"></span>
+          </div>
+          <div class="row import-options">
+            <label class="check-row">
+              <input id="import-client-mod" type="checkbox" checked />
+              <span data-i18n="field_client_mod"></span>
+            </label>
+            <label class="check-row">
+              <input id="import-cosmetica" type="checkbox" checked />
+              <span data-i18n="field_cosmetica"></span>
+            </label>
+            <button id="btn-import-modpack" class="btn secondary small" data-i18n="btn_import_pick"></button>
+          </div>
         </div>
-        <div class="row import-options">
-          <label class="check-row">
-            <input id="import-client-mod" type="checkbox" checked />
-            <span data-i18n="field_client_mod"></span>
-          </label>
-          <label class="check-row">
-            <input id="import-cosmetica" type="checkbox" checked />
-            <span data-i18n="field_cosmetica"></span>
-          </label>
-        </div>
+
         <div id="instance-list" class="instance-list"></div>
         <div id="global-status" class="status-line"></div>
         <div id="progress-wrap" class="progress-wrap hidden">

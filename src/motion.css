@@ -347,3 +347,67 @@ button:disabled {
   from { transform: translateY(-3px); opacity: 0; }
   to   { transform: translateY(0);    opacity: 1; }
 }
+
+/* ===========================================================================
+ * Home
+ *
+ * Movement only. Nothing here sets a colour or a position that style.css has
+ * not already decided, which is the rule this file was split out for.
+ * ======================================================================== */
+
+@keyframes hero-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.view.active .hero { animation: hero-rise .5s cubic-bezier(.22, 1, .36, 1) both; }
+
+/* Each part of the hero arrives just after the panel it sits in, so the eye is
+   led to the button rather than shown everything at once. */
+.view.active .hero-eyebrow { animation: hero-rise .45s cubic-bezier(.22,1,.36,1) .10s both; }
+.view.active .hero-name    { animation: hero-rise .45s cubic-bezier(.22,1,.36,1) .16s both; }
+.view.active .hero-label,
+.view.active .hero-select  { animation: hero-rise .45s cubic-bezier(.22,1,.36,1) .22s both; }
+.view.active .hero-meta    { animation: hero-rise .45s cubic-bezier(.22,1,.36,1) .26s both; }
+.view.active .play-btn     { animation: hero-rise .5s cubic-bezier(.22,1,.36,1) .30s both; }
+
+/* A slow breath on the button, so the screen is never completely still. It is
+   deliberately weak: this sits under the cursor for as long as the launcher is
+   open, and anything livelier becomes something to wait out. */
+@keyframes play-breathe {
+  0%, 100% { box-shadow: 0 10px 30px #7c5cff44; }
+  50%      { box-shadow: 0 12px 38px #7c5cff66; }
+}
+.play-btn:not(:disabled) { animation: play-breathe 4.5s ease-in-out 1.2s infinite; }
+
+.play-btn:not(:disabled):hover {
+  transform: translateY(-2px);
+  filter: brightness(1.07);
+}
+.play-btn:not(:disabled):active { transform: translateY(0) scale(.985); }
+.play-btn { transition: transform .16s ease, filter .16s ease; }
+
+/* The figure settles in rather than appearing */
+@keyframes figure-in {
+  from { opacity: 0; transform: translateY(10px) scale(.96); }
+  to   { opacity: 1; transform: none; }
+}
+.view.active .hero-figure { animation: figure-in .6s cubic-bezier(.22,1,.36,1) .06s both; }
+
+.import-area { transition: opacity .2s ease; }
+
+/* Everything above is decoration. Somebody who has asked the system to stop
+   moving things has asked for that too. */
+@media (prefers-reduced-motion: reduce) {
+  .view.active .hero,
+  .view.active .hero-figure,
+  .view.active .hero-eyebrow,
+  .view.active .hero-name,
+  .view.active .hero-label,
+  .view.active .hero-select,
+  .view.active .hero-meta,
+  .view.active .play-btn {
+    animation: none;
+  }
+  .play-btn:not(:disabled) { animation: none; }
+}

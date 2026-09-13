@@ -97,6 +97,10 @@ function showView(name) {
   // belongs to the game, so it changes while the launcher is running.
   if (name === "servers") loadServerProfiles();
 
+  // The figure's loop stops itself whenever its canvas is off screen, so
+  // coming back to this view has to wake it rather than assume it kept going.
+  if (name === "instances") homeSkinViewer()?.redraw();
+
   // The view animates itself in; its contents follow one after another
   stagger(target.querySelectorAll(".instance-card, .mod-card, .account-row"));
 }
@@ -152,9 +156,11 @@ function renderInstances() {
     return;
   }
 
-  instances.forEach((inst) => {
+  sortedInstances().forEach((inst) => {
     const card = document.createElement("div");
     card.className = "instance-card";
+    // So the hero above can mark whichever row it is pointing at
+    card.dataset.instanceId = inst.id;
 
     const installed = !!inst.version_id && inst.version_id.length > 0 && inst.installed !== false;
     const loaderLabel =
@@ -201,11 +207,16 @@ function renderInstances() {
     playBtn.onclick = () => launchInstance(inst);
     actions.appendChild(playBtn);
 
-    const installBtn = document.createElement("button");
-    installBtn.className = "btn secondary small";
-    installBtn.textContent = t("btn_install");
-    installBtn.onclick = () => installInstance(inst);
-    actions.appendChild(installBtn);
+    // Only where there is something to install. The check was already being
+    // worked out above and then not used, so every instance offered to install
+    // itself again - including the one you had just played.
+    if (!installed) {
+      const installBtn = document.createElement("button");
+      installBtn.className = "btn secondary small";
+      installBtn.textContent = t("btn_install");
+      installBtn.onclick = () => installInstance(inst);
+      actions.appendChild(installBtn);
+    }
 
     const folderBtn = document.createElement("button");
     folderBtn.className = "btn icon-btn small";
@@ -251,6 +262,8 @@ async function refreshInstances() {
   renderModsInstanceOptions();
   renderSpInstanceOptions();
   renderRunning();
+  renderHome();
+  loadHomeProfiles();
 }
 
 async function installInstance(inst) {
@@ -1296,6 +1309,8 @@ $("btn-confirm-create").addEventListener("click", async () => {
 
 // ---------------- account ----------------
 function renderAccount() {
+  renderHome();
+  refreshHomeSkin();
   if (account) {
     $("account-signed-in").classList.remove("hidden");
     $("account-signed-out").classList.add("hidden");
@@ -2375,4 +2390,185 @@ $("btn-sp-apply").addEventListener("click", async () => {
   } catch (e) {
     setStatus("sp-status", String(e), "error");
   }
+});
+
+/* ===========================================================================
+ * Home
+ *
+ * One question per screen. This one asks "play?" and everything else on the
+ * page is an answer to a question you did not ask yet.
+ * ======================================================================== */
+
+let homeViewer = null;
+
+/** The figure, built once and kept, so switching views does not reset its turn. */
+function homeSkinViewer() {
+  const canvas = $("home-skin");
+  if (!canvas) return null;
+  if (!homeViewer) {
+    // Slow on purpose. A full turn takes about twenty seconds, which reads as
+    // alive at a glance and never as something demanding to be watched.
+    homeViewer = createSkinViewer(canvas, { spin: 0.32 });
+  }
+  return homeViewer;
+}
+
+/**
+ * Instances in the order somebody actually wants them.
+ *
+ * Most recently played first, because the launcher is opened to carry on. Ties
+ * and never-played instances fall back to name, so the list is stable between
+ * renders rather than re-ordering itself on every refresh.
+ */
+function sortedInstances() {
+  return [...instances].sort((a, b) => {
+    const played = (b.last_played || 0) - (a.last_played || 0);
+    if (played !== 0) return played;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+const HOME_PICK_KEY = "spaceclient.home.instance";
+
+function homeSelectedId() {
+  const stored = localStorage.getItem(HOME_PICK_KEY);
+  if (stored && instances.some((i) => i.id === stored)) return stored;
+  const first = sortedInstances()[0];
+  return first ? first.id : "";
+}
+
+function homeSelectedInstance() {
+  const id = $("home-instance").value || homeSelectedId();
+  return instances.find((i) => i.id === id) || null;
+}
+
+function renderHome() {
+  const select = $("home-instance");
+  if (!select) return;
+
+  const greeting = $("home-greeting");
+  const name = $("home-player");
+  if (account) {
+    greeting.textContent = t("home_greeting");
+    // username, not name: that is what the account carries, and reading the
+    // wrong one puts the word "undefined" at the top of the launcher.
+    name.textContent = account.username;
+  } else {
+    greeting.textContent = "";
+    name.textContent = t("not_signed_in");
+  }
+
+  const previous = select.value || homeSelectedId();
+  select.innerHTML = "";
+  sortedInstances().forEach((inst) => {
+    const opt = document.createElement("option");
+    opt.value = inst.id;
+    opt.textContent = inst.name;
+    select.appendChild(opt);
+  });
+  if (instances.some((i) => i.id === previous)) select.value = previous;
+
+  renderHomeDetail();
+}
+
+function renderHomeDetail() {
+  const inst = homeSelectedInstance();
+  const meta = $("home-meta");
+  const note = $("home-note");
+  const play = $("btn-play");
+  meta.innerHTML = "";
+
+  if (!inst) {
+    note.textContent = t("instances_empty");
+    play.disabled = true;
+    return;
+  }
+
+  const loaderLabel =
+    inst.loader === "vanilla"
+      ? "Vanilla"
+      : inst.loader.charAt(0).toUpperCase() + inst.loader.slice(1);
+
+  [inst.mc_version, loaderLabel, `${inst.ram_mb} MB`].forEach((text) => {
+    const chip = document.createElement("span");
+    chip.className = "tag";
+    chip.textContent = text;
+    meta.appendChild(chip);
+  });
+
+  const installed = !!inst.version_id && inst.version_id.length > 0 && inst.installed !== false;
+  play.disabled = !installed;
+
+  // The profile decides which mods this launch gets, so it belongs next to the
+  // button that starts it rather than only on the screen where it was set.
+  let line = installed ? "" : t("home_needs_install");
+  const active = homeProfileNote(inst.id);
+  if (active) line = line ? `${line} · ${active}` : active;
+  note.textContent = line;
+
+  // Mark the matching row below, so the two halves of the screen agree
+  document.querySelectorAll(".instance-card").forEach((card) => {
+    card.classList.toggle("is-selected", card.dataset.instanceId === inst.id);
+  });
+}
+
+/** What the saved profile will do to this launch, in one line. */
+let homeProfiles = {};
+function homeProfileNote(instanceId) {
+  const data = homeProfiles[instanceId];
+  if (!data || !data.active) return "";
+  const profile = (data.profiles || []).find((p) => p.address === data.active);
+  if (!profile) return "";
+  const off = (profile.disabled || []).length;
+  return t("home_profile", { name: profile.name || profile.address, off });
+}
+
+async function loadHomeProfiles() {
+  const wanted = instances.map((i) => i.id);
+  await Promise.all(
+    wanted.map(async (id) => {
+      try {
+        homeProfiles[id] = await invoke("get_server_profiles", { instanceId: id });
+      } catch {
+        homeProfiles[id] = null;
+      }
+    })
+  );
+  renderHomeDetail();
+}
+
+async function refreshHomeSkin() {
+  const viewer = homeSkinViewer();
+  if (!viewer || !account) return;
+  // Offline profiles have no Mojang texture to fetch, and asking for one is a
+  // request that can only fail.
+  if (account.offline) return;
+
+  try {
+    const profile = await invoke("get_skin_profile");
+    if (!profile?.skin_url) return;
+
+    // The same reading the skin screen does. variant comes back as "CLASSIC"
+    // or "SLIM" - upper case - and the cape is whichever entry in the list is
+    // marked active rather than a field of its own.
+    const slim = (profile.variant || "").toUpperCase() === "SLIM";
+    const cape = (profile.capes || []).find((c) => c.active);
+    await viewer.setSkin(profile.skin_url, slim, cape?.url || "");
+  } catch {
+    // A figure that will not load is not worth a message on the main screen
+  }
+}
+
+$("home-instance").addEventListener("change", () => {
+  localStorage.setItem(HOME_PICK_KEY, $("home-instance").value);
+  renderHomeDetail();
+});
+
+$("btn-play").addEventListener("click", () => {
+  const inst = homeSelectedInstance();
+  if (inst) launchInstance(inst);
+});
+
+$("btn-toggle-import").addEventListener("click", () => {
+  $("import-area").classList.toggle("hidden");
 });

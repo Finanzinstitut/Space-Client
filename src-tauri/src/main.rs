@@ -513,6 +513,12 @@ async fn launch_instance(
     // The mods folder is put into the chosen server's shape before Java
     // starts, because that is the only moment it can be: Fabric reads the
     // folder once, at startup, and nothing can change the set afterwards.
+    // Same reason as apply_server_profile: a second launch of an instance that
+    // is already up would rewrite the mods folder under the running one.
+    if state.running.lock().unwrap().contains_key(&id) {
+        return Err("That instance is already running.".into());
+    }
+
     let active = launcher::serverprofiles::load(&id).active;
     if !active.is_empty() {
         match launcher::serverprofiles::apply(&id, &active) {
@@ -534,6 +540,7 @@ async fn launch_instance(
     let child = launcher::launch::launch_instance(&app, &cfg, &inst, &account, join.as_deref())
         .map_err(|e| e.to_string())?;
 
+    instance::mark_played(&id);
     state.running.lock().unwrap().insert(id.clone(), child);
 
     // Poll for the process ending so the console can close itself and the
@@ -761,11 +768,23 @@ fn save_server_profiles(
     launcher::serverprofiles::save(&instance_id, &file).map_err(|e| e.to_string())
 }
 
+/// Applying means renaming jars. Doing that under a running game is a way to
+/// break it from outside: the JVM holds those files open, and what happens next
+/// depends on the operating system rather than on anything this code decides -
+/// a rename that fails on Windows and silently succeeds elsewhere, leaving a
+/// running game whose classes no longer match the files behind them.
+///
+/// So it is refused while the instance is up. The profile still applies on the
+/// next launch, which is the only moment it can take effect anyway.
 #[tauri::command]
-fn apply_server_profile(
+async fn apply_server_profile(
     instance_id: String,
     address: String,
+    state: State<'_, AppState>,
 ) -> Result<launcher::serverprofiles::Applied, String> {
+    if state.running.lock().unwrap().contains_key(&instance_id) {
+        return Err("Close the game first - mods cannot be switched while it is running.".into());
+    }
     launcher::serverprofiles::apply(&instance_id, &address).map_err(|e| e.to_string())
 }
 

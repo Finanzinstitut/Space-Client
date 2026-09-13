@@ -904,3 +904,175 @@ input.grow { flex: 1; }
 .nav-group:first-child {
   margin-top: 2px;
 }
+
+/* ===========================================================================
+ * Home
+ *
+ * Added rather than rewritten, and built entirely out of the variables at the
+ * top of this file - the palette is the one thing about this launcher nobody
+ * asked to change.
+ * ======================================================================== */
+
+.hero {
+  display: flex;
+  align-items: stretch;
+  gap: 28px;
+  padding: 24px 28px;
+  margin-bottom: 26px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background:
+    radial-gradient(90% 140% at 12% 0%, #7c5cff22 0%, transparent 60%),
+    var(--bg-panel);
+  box-shadow: 0 18px 50px #02010a66;
+}
+
+.hero-figure {
+  position: relative;
+  flex: 0 0 190px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  background: radial-gradient(60% 60% at 50% 38%, #38e0ff14 0%, transparent 70%);
+}
+
+/* The floor the figure stands on, so it does not hang in a void */
+.hero-figure::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  width: 96px;
+  height: 14px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(50% 50% at 50% 50%, #7c5cff44 0%, transparent 70%);
+}
+
+#home-skin {
+  width: 100%;
+  height: 260px;
+  cursor: grab;
+  position: relative;
+  z-index: 1;
+}
+#home-skin:active { cursor: grabbing; }
+
+.hero-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.hero-eyebrow {
+  font-size: 12px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.hero-name {
+  margin: 2px 0 18px;
+  font-size: 34px;
+  line-height: 1.1;
+  font-weight: 700;
+  background: linear-gradient(92deg, var(--text) 10%, var(--accent-2) 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hero-label {
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.hero-select {
+  width: 100%;
+  max-width: 420px;
+  padding: 11px 13px;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: #0a0820cc;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+}
+.hero-select:focus { outline: none; border-color: var(--accent); }
+
+.hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 18px;
+  min-height: 22px;
+}
+
+.hero-note { margin-top: 10px; font-size: 12px; color: var(--text-dim); min-height: 16px; }
+
+/* The one button this screen exists for, sized to say so. */
+.play-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 420px;
+  padding: 16px 26px;
+  border: none;
+  border-radius: 13px;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #0a0620;
+  cursor: pointer;
+  background: linear-gradient(100deg, var(--accent) 0%, var(--accent-2) 100%);
+  box-shadow: 0 10px 30px #7c5cff44;
+}
+.play-btn:disabled { opacity: .45; cursor: default; box-shadow: none; }
+.play-glyph { font-size: 13px; }
+
+.section-title { font-size: 21px; margin: 0; }
+
+.import-area {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 18px;
+  background: #0a081f80;
+}
+.import-area.hidden { display: none; }
+.import-area .drop-zone { margin: 0 0 10px; }
+
+/* A quieter card: the row you are playing is marked, the rest step back. */
+.instance-card.is-selected { border-color: var(--accent); box-shadow: 0 0 0 1px #7c5cff44, 0 10px 26px #02010a55; }
+.instance-card .btn.icon-only { padding: 8px 10px; }
+
+/* ---------------------------------------------------------------------------
+ * hidden, as a utility that actually holds
+ *
+ * There was no general rule for this - only a dozen per-component ones like
+ * `.btn.hidden` - and that is exactly as reliable as it sounds. Two things were
+ * being shown with the class correctly set on them: the running-instances strip
+ * had no rule at all, so `.hidden` did nothing to a plain block; and the
+ * running button lost to `#btn-running { display: inline-flex }`, because an id
+ * outranks any number of classes. Both read as "this feature is broken" and
+ * both were the markup being told to hide and the stylesheet declining.
+ *
+ * !important is the right tool here and not a shrug: this is a utility whose
+ * entire job is to beat whatever the component says about itself, including an
+ * id selector. Anything weaker loses the same argument again the next time.
+ * ------------------------------------------------------------------------ */
+.hidden { display: none !important; }
+
+/* The profile hint sits directly above the next label, which read as one
+   run-on block. Only spacing, and only in this view. */
+#view-servers .hint { margin-bottom: 14px; }

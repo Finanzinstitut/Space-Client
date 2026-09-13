@@ -2,6 +2,11 @@
 export const translations = {
   en: {
     nav_instances: "Instances",
+    home_playing: "Playing",
+    home_greeting: "Welcome back",
+    home_needs_install: "Not installed yet \u2014 install it from the list below.",
+    home_profile: "Profile: {name} ({off} mods off)",
+    btn_import_pick: "Choose a file...",
     nav_servers: "Servers",
     servers_title: "Server profiles",
     servers_sub: "Decide which mods load for which server.",
@@ -262,6 +267,11 @@ export const translations = {
 
   de: {
     nav_servers: "Server",
+    home_playing: "Du spielst",
+    home_greeting: "Willkommen zur\u00fcck",
+    home_needs_install: "Noch nicht installiert \u2014 unten in der Liste installieren.",
+    home_profile: "Profil: {name} ({off} Mods aus)",
+    btn_import_pick: "Datei w\u00e4hlen...",
     servers_title: "Serverprofile",
     servers_sub: "Festlegen, welche Mods f\u00fcr welchen Server geladen werden.",
     servers_restart_hint: "Fabric liest den Mods-Ordner genau einmal, beim Spielstart, und danach l\u00e4sst sich die Auswahl nicht mehr \u00e4ndern \u2014 ein Profil wird deshalb hier angewendet, vor dem Start. Profil wechseln hei\u00dft: Spiel neu starten.",

@@ -261,7 +261,14 @@ function project(point, yaw, pitch, scale, cx, cy) {
  * Returns a handle rather than drawing once, because the canvas has to be
  * redrawn on every mouse move and callers should not have to know that.
  */
-export function createSkinViewer(canvas) {
+/**
+ * @param options.spin  Idle rotation in radians per second. 0 keeps the figure
+ *                      still, which is what the skin editor wants - you are
+ *                      inspecting a texture there, and a model that turns while
+ *                      you look at a seam is a nuisance rather than a flourish.
+ */
+export function createSkinViewer(canvas, options = {}) {
+  const spin = options.spin || 0;
   const state = {
     images: { skin: null, cape: null },
     /** Cape sheets come in multiples of 64x32, so UVs scale with the file. */
@@ -293,6 +300,28 @@ export function createSkinViewer(canvas) {
   function draw() {
     state.frame = null;
     resize();
+
+    // Idle rotation.
+    //
+    // Scheduled here rather than after the drawing below, because the early
+    // return for "no skin loaded yet" sits between the two - and a loop that
+    // gave up during the moments before the texture arrived would never turn
+    // at all. Dragging wins: the hand beats the animation while it is held.
+    if (spin) {
+      const now = performance.now();
+      const step = state.lastTime ? Math.min(0.1, (now - state.lastTime) / 1000) : 0;
+      state.lastTime = now;
+      if (!state.dragging) state.yaw += spin * step;
+
+      // A canvas in a hidden view or a minimised window animates nothing and
+      // costs a whole core doing it, so the loop stops and the clock with it.
+      const visible = !document.hidden && canvas.isConnected && canvas.offsetParent !== null;
+      if (visible) {
+        schedule();
+      } else {
+        state.lastTime = 0;
+      }
+    }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
