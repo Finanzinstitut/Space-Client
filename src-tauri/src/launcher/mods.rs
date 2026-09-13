@@ -768,6 +768,33 @@ fn check_filename(filename: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The content files in an instance folder, as (base filename, enabled now).
+///
+/// Deliberately separate from `list_installed`: that one merges the manifest and
+/// backfills icons from Modrinth, which is right for a screen and wrong for the
+/// launch path, where a profile has to be applied before Java starts and a slow
+/// API call would sit in front of every single launch.
+pub fn scan_content(inst: &instance::Instance, project_type: &str) -> Vec<(String, bool)> {
+    let dir = inst.content_dir(project_type);
+    let mut out: Vec<(String, bool)> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let base = base_filename(&name);
+            if !(base.ends_with(".jar") || base.ends_with(".zip")) {
+                continue;
+            }
+            if out.iter().any(|(f, _)| f == &base) {
+                continue;
+            }
+            out.push((base, !name.ends_with(DISABLED_SUFFIX)));
+        }
+    }
+    out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    out
+}
+
 /// Switches a file between loaded and parked, by renaming it to `.disabled`.
 /// Keeping the file means the choice is reversible and survives a restart,
 /// which is what every other launcher does too.

@@ -9,7 +9,9 @@ const MOD_REPO: &str = "Finanzinstitut/Space-Client-Mod";
 
 /// Fixed file name, so installing a new build replaces the old one instead of
 /// leaving two versions in the folder fighting each other.
-const FILE_NAME: &str = "spaceclient.jar";
+/// Public so the server profiles can refuse to park it: switching off the
+/// client mod would take the menu that configures the profiles with it.
+pub const FILE_NAME: &str = "spaceclient.jar";
 
 fn http() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()

@@ -11,6 +11,8 @@ pub mod manifest;
 pub mod modpack;
 pub mod mods;
 pub mod progress;
+pub mod serverlist;
+pub mod serverprofiles;
 pub mod skin;
 pub mod skinlib;
 pub mod update;

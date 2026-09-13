@@ -93,6 +93,10 @@ function showView(name) {
     v.classList.toggle("active", v.id === "view-" + name)
   );
 
+  // Read fresh on every opening rather than once at startup: the server list
+  // belongs to the game, so it changes while the launcher is running.
+  if (name === "servers") loadServerProfiles();
+
   // The view animates itself in; its contents follow one after another
   stagger(target.querySelectorAll(".instance-card, .mod-card, .account-row"));
 }
@@ -245,6 +249,7 @@ async function refreshInstances() {
   instances = await invoke("list_instances");
   renderInstances();
   renderModsInstanceOptions();
+  renderSpInstanceOptions();
   renderRunning();
 }
 
@@ -2011,6 +2016,7 @@ $("btn-save-settings").addEventListener("click", async () => {
     renderInstances();
     renderAccount();
     renderModsInstanceOptions();
+    renderSpInstanceOptions();
     setStatus("settings-status", t("saved"), "success");
   } catch (e) {
     setStatus("settings-status", String(e), "error");
@@ -2118,3 +2124,255 @@ async function init() {
 }
 
 init();
+
+/* ===========================================================================
+ * Server profiles
+ *
+ * Which mods load for which server. The restart is not a shortcoming of this
+ * screen, it is the shape of the loader: Fabric puts every jar on the classpath
+ * before Minecraft exists and weaves mixins in as classes load, so there is
+ * nothing to unload later. Deciding the set before Java starts is the only
+ * moment that exists, and it belongs here.
+ * ======================================================================== */
+
+let spServers = [];
+let spFiles = [];
+let spData = { profiles: [], active: "" };
+
+const SP_CLIENT_MOD = "spaceclient.jar";
+
+function currentSpInstance() {
+  const id = $("sp-instance").value;
+  return instances.find((i) => i.id === id) || null;
+}
+
+function renderSpInstanceOptions() {
+  const select = $("sp-instance");
+  if (!select) return;
+  const previous = select.value;
+  select.innerHTML = "";
+  instances.forEach((inst) => {
+    const opt = document.createElement("option");
+    opt.value = inst.id;
+    opt.textContent = `${inst.name} — ${inst.mc_version} (${inst.loader})`;
+    select.appendChild(opt);
+  });
+  if (previous && instances.some((i) => i.id === previous)) select.value = previous;
+}
+
+/** The profile for whatever server is selected, made on demand but not stored
+ *  until Save - so clicking through the list does not litter the file. */
+function spCurrentProfile() {
+  const address = $("sp-server").value;
+  if (!address) return null;
+
+  let profile = spData.profiles.find((p) => p.address === address);
+  if (!profile) {
+    const known = spServers.find((s) => s.address === address);
+    profile = {
+      address,
+      name: known ? known.name : address,
+      disabled: [],
+      auto_join: false,
+    };
+  }
+  return profile;
+}
+
+async function loadServerProfiles() {
+  const inst = currentSpInstance();
+  const warning = $("sp-warning");
+  const panel = $("sp-panel");
+
+  if (!inst) {
+    warning.textContent = t("mods_no_instance");
+    warning.classList.remove("hidden");
+    panel.classList.add("hidden");
+    return;
+  }
+  warning.classList.add("hidden");
+  panel.classList.remove("hidden");
+
+  setStatus("sp-status", "");
+  try {
+    const [list, data, files] = await Promise.all([
+      invoke("list_game_servers", { instanceId: inst.id }),
+      invoke("get_server_profiles", { instanceId: inst.id }),
+      invoke("list_instance_mod_files", { instanceId: inst.id }),
+    ]);
+    spServers = list.servers || [];
+    spData = data || { profiles: [], active: "" };
+    spFiles = files || [];
+    $("sp-server-note").textContent = list.note || "";
+  } catch (e) {
+    setStatus("sp-status", String(e), "error");
+    return;
+  }
+
+  const select = $("sp-server");
+  select.innerHTML = "";
+
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = t("servers_none");
+  select.appendChild(none);
+
+  spServers.forEach((s) => {
+    const opt = document.createElement("option");
+    opt.value = s.address;
+    opt.textContent = s.name === s.address ? s.address : `${s.name} — ${s.address}`;
+    select.appendChild(opt);
+  });
+
+  // A profile whose server has since been removed in game would otherwise be
+  // invisible and still apply on launch, which is the worst of both.
+  spData.profiles
+    .filter((p) => !spServers.some((s) => s.address === p.address))
+    .forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.address;
+      opt.textContent = `${p.name || p.address} — ${t("servers_gone")}`;
+      select.appendChild(opt);
+    });
+
+  select.value = spData.active || "";
+  renderSpMods();
+}
+
+function renderSpMods() {
+  const list = $("sp-mods");
+  list.innerHTML = "";
+
+  const profile = spCurrentProfile();
+  $("sp-active").checked = !!profile && spData.active === profile.address;
+  $("sp-autojoin").checked = !!profile && !!profile.auto_join;
+  $("sp-active").disabled = !profile;
+  $("sp-autojoin").disabled = !profile;
+
+  if (!profile) {
+    $("sp-summary").textContent = t("servers_pick_first");
+    return;
+  }
+  if (spFiles.length === 0) {
+    $("sp-summary").textContent = "";
+    const p = document.createElement("p");
+    p.className = "empty-note";
+    p.textContent = t("servers_no_mods");
+    list.appendChild(p);
+    return;
+  }
+
+  let off = 0;
+  spFiles.forEach(([filename]) => {
+    const locked = filename.toLowerCase() === SP_CLIENT_MOD;
+    const disabled = !locked && profile.disabled.includes(filename);
+    if (disabled) off++;
+
+    const card = document.createElement("div");
+    card.className = "mod-card";
+    card.innerHTML = `
+      <img class="mod-icon placeholder" alt="" />
+      <div class="mod-body">
+        <div class="mod-title"></div>
+        <div class="mod-meta"></div>
+      </div>
+    `;
+    card.querySelector(".mod-title").textContent = filename.replace(/\.jar$/i, "");
+    card.querySelector(".mod-meta").textContent = locked ? t("servers_locked") : filename;
+
+    const actions = document.createElement("div");
+    actions.className = "mod-actions";
+
+    const toggle = document.createElement("button");
+    toggle.className = disabled ? "btn secondary small" : "btn primary small";
+    toggle.textContent = disabled ? t("servers_off") : t("servers_on");
+    toggle.disabled = locked;
+    toggle.onclick = () => {
+      // Held in memory until Save, so a misclick costs nothing and the file on
+      // disk only ever changes when you say so.
+      if (profile.disabled.includes(filename)) {
+        profile.disabled = profile.disabled.filter((f) => f !== filename);
+      } else {
+        profile.disabled.push(filename);
+      }
+      spStage(profile);
+      renderSpMods();
+    };
+    actions.appendChild(toggle);
+    card.appendChild(actions);
+    list.appendChild(card);
+  });
+
+  $("sp-summary").textContent = t("servers_summary", {
+    off,
+    total: spFiles.length,
+  });
+}
+
+/** Keeps an edited profile in the in-memory list without writing the file. */
+function spStage(profile) {
+  const at = spData.profiles.findIndex((p) => p.address === profile.address);
+  if (at >= 0) spData.profiles[at] = profile;
+  else spData.profiles.push(profile);
+}
+
+$("sp-instance").addEventListener("change", loadServerProfiles);
+$("sp-server").addEventListener("change", () => {
+  // The empty entry is a choice, not an absence of one: picking it means the
+  // next launch leaves the mods folder alone. Without this it only cleared the
+  // view and the previously active profile still applied on launch.
+  if (!$("sp-server").value) spData.active = "";
+  renderSpMods();
+});
+
+$("sp-active").addEventListener("change", () => {
+  const profile = spCurrentProfile();
+  if (!profile) return;
+  spStage(profile);
+  spData.active = $("sp-active").checked ? profile.address : "";
+});
+
+$("sp-autojoin").addEventListener("change", () => {
+  const profile = spCurrentProfile();
+  if (!profile) return;
+  profile.auto_join = $("sp-autojoin").checked;
+  spStage(profile);
+});
+
+$("btn-sp-save").addEventListener("click", async () => {
+  const inst = currentSpInstance();
+  if (!inst) return;
+  try {
+    await invoke("save_server_profiles", { instanceId: inst.id, file: spData });
+    setStatus("sp-status", t("servers_saved"), "success");
+  } catch (e) {
+    setStatus("sp-status", String(e), "error");
+  }
+});
+
+$("btn-sp-apply").addEventListener("click", async () => {
+  const inst = currentSpInstance();
+  const profile = spCurrentProfile();
+  if (!inst || !profile) return;
+  try {
+    // Saved first: applying something other than what is on disk would leave
+    // the screen and the mods folder telling two different stories.
+    await invoke("save_server_profiles", { instanceId: inst.id, file: spData });
+    const applied = await invoke("apply_server_profile", {
+      instanceId: inst.id,
+      address: profile.address,
+    });
+    const on = applied.enabled.length;
+    const off = applied.disabled.length;
+    setStatus(
+      "sp-status",
+      on + off === 0 ? t("servers_nothing_to_do") : t("servers_applied", { on, off }),
+      applied.failed.length ? "error" : "success"
+    );
+    if (applied.failed.length) {
+      setStatus("sp-status", applied.failed.join("; "), "error");
+    }
+  } catch (e) {
+    setStatus("sp-status", String(e), "error");
+  }
+});

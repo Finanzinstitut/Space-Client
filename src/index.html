@@ -42,6 +42,7 @@
         <div class="nav-group">Play</div>
         <button class="nav-item active" data-view="instances">🚀 <span data-i18n="nav_instances"></span></button>
         <button class="nav-item" data-view="mods">🛰️ <span data-i18n="nav_mods"></span></button>
+        <button class="nav-item" data-view="servers">🌐 <span data-i18n="nav_servers"></span></button>
 
         <div class="nav-group">You</div>
         <button class="nav-item" data-view="skin">🧍 <span data-i18n="nav_skin"></span></button>
@@ -161,6 +162,54 @@
           </div>
 
           <div id="mods-status" class="status-line"></div>
+        </div>
+      </section>
+
+      <!-- SERVER PROFILES -->
+      <section id="view-servers" class="view">
+        <h1 data-i18n="servers_title"></h1>
+        <p class="subtitle" data-i18n="servers_sub"></p>
+
+        <div class="card wide">
+          <div class="field grow">
+            <label data-i18n="mods_pick_instance"></label>
+            <select id="sp-instance"></select>
+          </div>
+
+          <div id="sp-warning" class="warning-box hidden"></div>
+
+          <div id="sp-panel">
+            <p class="hint" data-i18n="servers_restart_hint"></p>
+
+            <div class="field grow">
+              <label data-i18n="servers_pick"></label>
+              <select id="sp-server"></select>
+            </div>
+
+            <p class="hint" id="sp-server-note"></p>
+
+            <div class="check-row">
+              <label class="checkbox">
+                <input type="checkbox" id="sp-active" />
+                <span data-i18n="servers_use_on_launch"></span>
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" id="sp-autojoin" />
+                <span data-i18n="servers_auto_join"></span>
+              </label>
+            </div>
+
+            <p class="hint" id="sp-summary"></p>
+
+            <div id="sp-mods" class="mod-list"></div>
+
+            <div class="row">
+              <button id="btn-sp-save" class="btn primary small" data-i18n="servers_save"></button>
+              <button id="btn-sp-apply" class="btn secondary small" data-i18n="servers_apply_now"></button>
+            </div>
+          </div>
+
+          <div id="sp-status" class="status-line"></div>
         </div>
       </section>
 

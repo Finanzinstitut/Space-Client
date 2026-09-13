@@ -510,7 +510,28 @@ async fn launch_instance(
     let cfg = state.config.lock().unwrap().clone();
     let inst = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
 
-    let child = launcher::launch::launch_instance(&app, &cfg, &inst, &account)
+    // The mods folder is put into the chosen server's shape before Java
+    // starts, because that is the only moment it can be: Fabric reads the
+    // folder once, at startup, and nothing can change the set afterwards.
+    let active = launcher::serverprofiles::load(&id).active;
+    if !active.is_empty() {
+        match launcher::serverprofiles::apply(&id, &active) {
+            Ok(applied) => {
+                if !applied.failed.is_empty() {
+                    return Err(format!(
+                        "The profile for {} could not be applied: {}",
+                        active,
+                        applied.failed.join("; ")
+                    ));
+                }
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+
+    let join = launcher::serverprofiles::auto_join_address(&id);
+
+    let child = launcher::launch::launch_instance(&app, &cfg, &inst, &account, join.as_deref())
         .map_err(|e| e.to_string())?;
 
     state.running.lock().unwrap().insert(id.clone(), child);
@@ -711,6 +732,43 @@ async fn update_all_mods(app: tauri::AppHandle, instance_id: String) -> Result<u
     mods::update_all(&app, instance_id).await.map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// per-server mod profiles
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn list_game_servers(instance_id: String) -> Result<launcher::serverlist::ServerList, String> {
+    let inst = instance::get(&instance_id).ok_or_else(|| "Instance not found".to_string())?;
+    Ok(launcher::serverlist::read(&inst.game_dir()))
+}
+
+#[tauri::command]
+fn list_instance_mod_files(instance_id: String) -> Result<Vec<(String, bool)>, String> {
+    let inst = instance::get(&instance_id).ok_or_else(|| "Instance not found".to_string())?;
+    Ok(launcher::mods::scan_content(&inst, "mod"))
+}
+
+#[tauri::command]
+fn get_server_profiles(instance_id: String) -> Result<launcher::serverprofiles::ProfileFile, String> {
+    Ok(launcher::serverprofiles::load(&instance_id))
+}
+
+#[tauri::command]
+fn save_server_profiles(
+    instance_id: String,
+    file: launcher::serverprofiles::ProfileFile,
+) -> Result<(), String> {
+    launcher::serverprofiles::save(&instance_id, &file).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn apply_server_profile(
+    instance_id: String,
+    address: String,
+) -> Result<launcher::serverprofiles::Applied, String> {
+    launcher::serverprofiles::apply(&instance_id, &address).map_err(|e| e.to_string())
+}
+
 fn main() {
     let config = LauncherConfig::load();
     config.ensure_dirs().ok();
@@ -772,6 +830,11 @@ fn main() {
             check_mod_updates,
             update_mod,
             update_all_mods,
+            list_game_servers,
+            list_instance_mod_files,
+            get_server_profiles,
+            save_server_profiles,
+            apply_server_profile,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Space Client");
