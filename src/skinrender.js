@@ -269,6 +269,21 @@ function project(point, yaw, pitch, scale, cx, cy) {
  */
 export function createSkinViewer(canvas, options = {}) {
   const spin = options.spin || 0;
+
+  /**
+   * How often the idle turn is allowed to draw a frame.
+   *
+   * Not every frame the screen offers. This figure is rasterised in software,
+   * face by face, on the same thread as everything else - measured, it roughly
+   * halves what the page has left over. A slow turn does not need sixty frames
+   * a second to read as smooth, and the launcher sits open beside a running
+   * game, where the frames belong to the game.
+   */
+  const minFrameMs = options.minFrameMs || 40;
+
+  /** Turned off while a game is running. Dragging still works. */
+  let spinning = true;
+
   const state = {
     images: { skin: null, cape: null },
     /** Cape sheets come in multiples of 64x32, so UVs scale with the file. */
@@ -281,6 +296,8 @@ export function createSkinViewer(canvas, options = {}) {
     lastX: 0,
     lastY: 0,
     frame: null,
+    idleTimer: null,
+    lastTime: 0,
   };
 
   const ctx = canvas.getContext("2d");
@@ -316,8 +333,8 @@ export function createSkinViewer(canvas, options = {}) {
       // A canvas in a hidden view or a minimised window animates nothing and
       // costs a whole core doing it, so the loop stops and the clock with it.
       const visible = !document.hidden && canvas.isConnected && canvas.offsetParent !== null;
-      if (visible) {
-        schedule();
+      if (visible && spinning) {
+        scheduleIdle();
       } else {
         state.lastTime = 0;
       }
@@ -407,6 +424,15 @@ export function createSkinViewer(canvas, options = {}) {
     if (state.frame === null) state.frame = requestAnimationFrame(draw);
   }
 
+  /** The idle turn's own pacing, so it does not ask for every frame going. */
+  function scheduleIdle() {
+    if (state.idleTimer !== null || state.frame !== null) return;
+    state.idleTimer = setTimeout(() => {
+      state.idleTimer = null;
+      schedule();
+    }, minFrameMs);
+  }
+
   // ---- mouse ----
   function onDown(event) {
     state.dragging = true;
@@ -485,9 +511,23 @@ export function createSkinViewer(canvas, options = {}) {
       schedule();
     },
     redraw: schedule,
+    /**
+     * Starts or stops the idle turn.
+     *
+     * Stopped while a game is running: a launcher quietly animating in the
+     * background is taking frames from the thing it was opened to start.
+     */
+    setSpinning(on) {
+      if (spinning === on) return;
+      spinning = on;
+      state.lastTime = 0;
+      if (on) schedule();
+    },
+
     destroy() {
       window.removeEventListener("resize", onResize);
       if (state.frame !== null) cancelAnimationFrame(state.frame);
+      if (state.idleTimer !== null) clearTimeout(state.idleTimer);
     },
   };
 }

@@ -33,6 +33,9 @@
   Not reduced - none. Vestibular trouble is not helped by a shorter slide, and
   the interface works perfectly without any of it.
 */
+body.game-running .stars,
+body.game-running .stars2 { animation: none; }
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -371,14 +374,32 @@ button:disabled {
 .view.active .hero-meta    { animation: hero-rise .45s cubic-bezier(.22,1,.36,1) .26s both; }
 .view.active .play-btn     { animation: hero-rise .5s cubic-bezier(.22,1,.36,1) .30s both; }
 
-/* A slow breath on the button, so the screen is never completely still. It is
-   deliberately weak: this sits under the cursor for as long as the launcher is
-   open, and anything livelier becomes something to wait out. */
-@keyframes play-breathe {
-  0%, 100% { box-shadow: 0 10px 30px #7c5cff44; }
-  50%      { box-shadow: 0 12px 38px #7c5cff66; }
+/* A slow breath on the button, so the screen is never completely still.
+ *
+ * The glow is a separate layer whose opacity is animated, rather than an
+ * animated box-shadow on the button itself. They look the same and cost very
+ * different things: a changing box-shadow has the browser re-blur and repaint
+ * that whole soft edge on every frame, while an opacity change on a layer that
+ * already exists is handled by the compositor and never touches paint.
+ */
+.play-btn { position: relative; }
+.play-btn::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 12px 38px #7c5cff66;
+  opacity: 0;
 }
-.play-btn:not(:disabled) { animation: play-breathe 4.5s ease-in-out 1.2s infinite; }
+@keyframes play-breathe {
+  0%, 100% { opacity: 0; }
+  50%      { opacity: 1; }
+}
+.play-btn:not(:disabled)::after { animation: play-breathe 4.5s ease-in-out 1.2s infinite; }
+
+/* While a game is running nothing here animates at all. */
+body.game-running .play-btn:not(:disabled)::after { animation: none; opacity: 0; }
 
 .play-btn:not(:disabled):hover {
   transform: translateY(-2px);
@@ -409,5 +430,5 @@ button:disabled {
   .view.active .play-btn {
     animation: none;
   }
-  .play-btn:not(:disabled) { animation: none; }
+  .play-btn:not(:disabled)::after { animation: none; opacity: 0; }
 }

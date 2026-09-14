@@ -735,6 +735,13 @@ async function refreshRunning() {
   }
   runningIds = found;
   renderRunning();
+
+  // Everything decorative stops while a game is up. The launcher stays open
+  // beside Minecraft, and a turning figure and a breathing button are frames
+  // taken from the thing the launcher was opened to start.
+  const playing = runningIds.size > 0;
+  document.body.classList.toggle("game-running", playing);
+  homeSkinViewer()?.setSpinning(!playing);
 }
 
 function renderRunning() {
