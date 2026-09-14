@@ -32,6 +32,35 @@ pub struct LauncherConfig {
     /// watched and killed without digging through log files.
     #[serde(default)]
     pub live_logs: bool,
+    /// Movement on the home screen - the turning figure and the glow on the
+    /// play button.
+    ///
+    /// Off by default. A figure that turns by itself the moment the launcher
+    /// opens is a decision made for somebody, and the people it bothers are
+    /// exactly the people who will not go looking for the switch. Anyone who
+    /// wants it finds it in the same place either way.
+    #[serde(default)]
+    pub home_motion: bool,
+    /// Occasional idle animations on the figure - a wave, a glance around.
+    /// Off for the same reason, and separately, because "turning is fine,
+    /// acting is not" is a reasonable thing to want.
+    #[serde(default)]
+    pub skin_animations: bool,
+    /// Pack every world in an instance before launching it.
+    ///
+    /// Off by default, and that is a judgement rather than caution: on a large
+    /// world this adds seconds to every single launch, and somebody who has not
+    /// asked for it would experience their launcher getting slower for no
+    /// visible reason. It is offered where it can be understood instead.
+    #[serde(default)]
+    pub backup_on_launch: bool,
+    /// How many copies of each world to keep.
+    #[serde(default = "default_keep")]
+    pub backup_keep: u32,
+}
+
+fn default_keep() -> u32 {
+    5
 }
 
 fn default_language() -> String {
@@ -54,6 +83,10 @@ impl Default for LauncherConfig {
             language: default_language(),
             check_updates: true,
             live_logs: false,
+            home_motion: false,
+            skin_animations: false,
+            backup_on_launch: false,
+            backup_keep: 5,
         }
     }
 }

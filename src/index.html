@@ -42,6 +42,8 @@
         <div class="nav-group">Play</div>
         <button class="nav-item active" data-view="instances">🚀 <span data-i18n="nav_instances"></span></button>
         <button class="nav-item" data-view="mods">🛰️ <span data-i18n="nav_mods"></span></button>
+        <button class="nav-item" data-view="servers">🌐 <span data-i18n="nav_servers"></span></button>
+        <button class="nav-item" data-view="worlds">🌍 <span data-i18n="nav_worlds"></span></button>
 
         <div class="nav-group">You</div>
         <button class="nav-item" data-view="skin">🧍 <span data-i18n="nav_skin"></span></button>
@@ -60,9 +62,44 @@
     <main class="content">
       <!-- INSTANCES -->
       <section id="view-instances" class="view active">
+        <!--
+          The opening screen answers one question - press this to play - and
+          everything else waits below it. The figure is you: the skin the game
+          will actually start with, turning on its own, because a launcher that
+          shows you nothing of yourself is a file manager with a wallpaper.
+        -->
+        <div class="hero">
+          <div class="hero-figure">
+            <canvas id="home-skin"></canvas>
+          </div>
+
+          <div class="hero-main">
+            <div class="hero-eyebrow" id="home-greeting"></div>
+            <h1 class="hero-name" id="home-player">—</h1>
+
+            <label class="hero-label" data-i18n="home_playing"></label>
+            <select id="home-instance" class="hero-select"></select>
+            <div class="hero-meta" id="home-meta"></div>
+
+            <button id="btn-play" class="play-btn">
+              <span class="play-glyph">▶</span>
+              <span data-i18n="btn_play"></span>
+            </button>
+            <div class="hero-note" id="home-note"></div>
+          </div>
+        </div>
+
+        <!--
+          Shown only when something is actually wrong. A mod built for another
+          Minecraft version does not refuse politely - it dies on a missing
+          class deep in the log - and everything needed to see it coming is
+          readable before Java starts.
+        -->
+        <div id="modcheck" class="warning-box hidden"></div>
+
         <div class="head-row">
           <div>
-            <h1 data-i18n="instances_title"></h1>
+            <h2 class="section-title" data-i18n="instances_title"></h2>
             <p class="subtitle" data-i18n="instances_sub"></p>
           </div>
           <div class="head-actions">
@@ -70,7 +107,7 @@
               <span class="run-dot"></span>
               <span id="btn-running-label"></span>
             </button>
-            <button id="btn-import-modpack" class="btn secondary" data-i18n="btn_import"></button>
+            <button id="btn-toggle-import" class="btn secondary" data-i18n="btn_import"></button>
             <button id="btn-new-instance" class="btn primary" data-i18n="btn_new_instance"></button>
           </div>
         </div>
@@ -81,20 +118,29 @@
           <div id="running-list" class="running-list"></div>
         </div>
 
-        <div id="drop-zone" class="drop-zone">
-          <span>📦</span>
-          <span data-i18n="import_hint"></span>
+        <!--
+          Folded away until asked for. Importing a modpack happens once in a
+          while; it used to occupy the best space on the screen permanently,
+          above the instances it is meant to produce.
+        -->
+        <div id="import-area" class="import-area hidden">
+          <div id="drop-zone" class="drop-zone">
+            <span>📦</span>
+            <span data-i18n="import_hint"></span>
+          </div>
+          <div class="row import-options">
+            <label class="check-row">
+              <input id="import-client-mod" type="checkbox" checked />
+              <span data-i18n="field_client_mod"></span>
+            </label>
+            <label class="check-row">
+              <input id="import-cosmetica" type="checkbox" checked />
+              <span data-i18n="field_cosmetica"></span>
+            </label>
+            <button id="btn-import-modpack" class="btn secondary small" data-i18n="btn_import_pick"></button>
+          </div>
         </div>
-        <div class="row import-options">
-          <label class="check-row">
-            <input id="import-client-mod" type="checkbox" checked />
-            <span data-i18n="field_client_mod"></span>
-          </label>
-          <label class="check-row">
-            <input id="import-cosmetica" type="checkbox" checked />
-            <span data-i18n="field_cosmetica"></span>
-          </label>
-        </div>
+
         <div id="instance-list" class="instance-list"></div>
         <div id="global-status" class="status-line"></div>
         <div id="progress-wrap" class="progress-wrap hidden">
@@ -161,6 +207,92 @@
           </div>
 
           <div id="mods-status" class="status-line"></div>
+        </div>
+      </section>
+
+      <!-- SERVER PROFILES -->
+      <section id="view-servers" class="view">
+        <h1 data-i18n="servers_title"></h1>
+        <p class="subtitle" data-i18n="servers_sub"></p>
+
+        <div class="card wide">
+          <div class="field grow">
+            <label data-i18n="mods_pick_instance"></label>
+            <select id="sp-instance"></select>
+          </div>
+
+          <div id="sp-warning" class="warning-box hidden"></div>
+
+          <div id="sp-panel">
+            <p class="hint" data-i18n="servers_restart_hint"></p>
+
+            <div class="field grow">
+              <label data-i18n="servers_pick"></label>
+              <select id="sp-server"></select>
+            </div>
+
+            <p class="hint" id="sp-server-note"></p>
+
+            <div class="check-row">
+              <label class="checkbox">
+                <input type="checkbox" id="sp-active" />
+                <span data-i18n="servers_use_on_launch"></span>
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" id="sp-autojoin" />
+                <span data-i18n="servers_auto_join"></span>
+              </label>
+            </div>
+
+            <p class="hint" id="sp-summary"></p>
+
+            <div class="row">
+              <button id="btn-sp-all-on" class="btn secondary small" data-i18n="servers_all_on"></button>
+              <button id="btn-sp-all-off" class="btn secondary small" data-i18n="servers_all_off"></button>
+            </div>
+
+            <div id="sp-mods" class="mod-list"></div>
+
+            <div class="row">
+              <button id="btn-sp-save" class="btn primary small" data-i18n="servers_save"></button>
+              <button id="btn-sp-apply" class="btn secondary small" data-i18n="servers_apply_now"></button>
+            </div>
+
+            <p class="hint" data-i18n="servers_rescue_hint"></p>
+            <div class="row">
+              <button id="btn-sp-rescue" class="btn secondary small" data-i18n="servers_rescue"></button>
+            </div>
+          </div>
+
+          <div id="sp-status" class="status-line"></div>
+        </div>
+      </section>
+
+      <!-- WORLDS -->
+      <section id="view-worlds" class="view">
+        <h1 data-i18n="worlds_title"></h1>
+        <p class="subtitle" data-i18n="worlds_sub"></p>
+
+        <div class="card wide">
+          <div class="field grow">
+            <label data-i18n="mods_pick_instance"></label>
+            <select id="wb-instance"></select>
+          </div>
+
+          <div id="wb-warning" class="warning-box hidden"></div>
+
+          <div id="wb-panel">
+            <div class="row">
+              <button id="btn-backup-all" class="btn primary small" data-i18n="worlds_backup_all"></button>
+              <span id="wb-worlds" class="hint"></span>
+            </div>
+
+            <p class="hint" data-i18n="worlds_hint"></p>
+
+            <div id="wb-list" class="mod-list"></div>
+          </div>
+
+          <div id="wb-status" class="status-line"></div>
         </div>
       </section>
 
@@ -306,6 +438,7 @@
               <input type="checkbox" id="check-updates" />
               <span data-i18n="field_updates"></span>
             </label>
+            <div id="update-status" class="status-line"></div>
           </div>
 
           <div class="field grow">
@@ -314,6 +447,28 @@
               <span data-i18n="field_live_logs"></span>
             </label>
             <p class="hint" data-i18n="live_logs_hint"></p>
+          </div>
+
+          <div class="field grow">
+            <label class="checkbox">
+              <input type="checkbox" id="home-motion" />
+              <span data-i18n="field_home_motion"></span>
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" id="skin-animations" />
+              <span data-i18n="field_skin_animations"></span>
+            </label>
+            <p class="hint" data-i18n="motion_hint"></p>
+          </div>
+
+          <div class="field grow">
+            <label class="checkbox">
+              <input type="checkbox" id="backup-on-launch" />
+              <span data-i18n="field_backup_launch"></span>
+            </label>
+            <label data-i18n="field_backup_keep"></label>
+            <input id="backup-keep" type="number" min="1" max="50" />
+            <p class="hint" data-i18n="backup_hint"></p>
           </div>
 
           <div class="row actions">

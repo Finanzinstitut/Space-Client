@@ -768,6 +768,48 @@ fn check_filename(filename: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The content files in an instance folder, as (base filename, enabled now).
+///
+/// Deliberately separate from `list_installed`: that one merges the manifest and
+/// backfills icons from Modrinth, which is right for a screen and wrong for the
+/// launch path, where a profile has to be applied before Java starts and a slow
+/// API call would sit in front of every single launch.
+pub fn scan_content(inst: &instance::Instance, project_type: &str) -> Vec<(String, bool)> {
+    let dir = inst.content_dir(project_type);
+
+    // Collected as names first, then asked about one at a time.
+    //
+    // Reading the state straight off each directory entry looks equivalent and
+    // is not: a folder can hold `x.jar` and `x.jar.disabled` at the same time -
+    // after a rename that half failed, or an install that wrote over a parked
+    // slot - and then the answer depended on which one the directory happened
+    // to yield first. Fabric loads `x.jar` in that situation, and a screen that
+    // said "off" while the loader was loading it is precisely the kind of lie
+    // this whole feature must not tell. resolve_on_disk already decides this,
+    // the same way, for the rename - so it decides it here too.
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let base = base_filename(&name);
+            if !(base.ends_with(".jar") || base.ends_with(".zip")) {
+                continue;
+            }
+            if !names.contains(&base) {
+                names.push(base);
+            }
+        }
+    }
+
+    let mut out: Vec<(String, bool)> = names
+        .into_iter()
+        .filter_map(|base| resolve_on_disk(&dir, &base).map(|(_, enabled)| (base, enabled)))
+        .collect();
+
+    out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    out
+}
+
 /// Switches a file between loaded and parked, by renaming it to `.disabled`.
 /// Keeping the file means the choice is reversible and survives a restart,
 /// which is what every other launcher does too.

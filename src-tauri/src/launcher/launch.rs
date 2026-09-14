@@ -147,6 +147,7 @@ pub fn launch_instance(
     cfg: &LauncherConfig,
     instance: &Instance,
     account: &Account,
+    join: Option<&str>,
 ) -> anyhow::Result<Child> {
     let version_id = if instance.version_id.is_empty() {
         instance.mc_version.clone()
@@ -293,6 +294,21 @@ pub fn launch_instance(
             .split_whitespace()
             .map(|s| substitute(s, &placeholders))
             .collect();
+    }
+
+    // Connect straight to a server instead of stopping at the menu.
+    //
+    // --quickPlayMultiplayer is vanilla and has been since 1.20. It is still
+    // added conditionally and never assumed to work: Minecraft's own parser is
+    // built with allowsUnrecognizedOptions, so on a version that does not know
+    // the flag the game starts at the menu as it always did, rather than
+    // refusing to launch. That is the right way for this to fail.
+    if let Some(address) = join {
+        let address = address.trim();
+        if !address.is_empty() {
+            game_args.push("--quickPlayMultiplayer".into());
+            game_args.push(address.to_string());
+        }
     }
 
     let mut jvm_args: Vec<String> = Vec::new();

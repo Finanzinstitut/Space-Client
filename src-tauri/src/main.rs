@@ -60,6 +60,10 @@ async fn set_settings(
     language: String,
     check_updates: bool,
     live_logs: bool,
+    home_motion: bool,
+    skin_animations: bool,
+    backup_on_launch: bool,
+    backup_keep: u32,
     state: State<'_, AppState>,
 ) -> Result<LauncherConfig, String> {
     let mut cfg = state.config.lock().unwrap();
@@ -68,6 +72,10 @@ async fn set_settings(
     cfg.language = language;
     cfg.check_updates = check_updates;
     cfg.live_logs = live_logs;
+    cfg.home_motion = home_motion;
+    cfg.skin_animations = skin_animations;
+    cfg.backup_on_launch = backup_on_launch;
+    cfg.backup_keep = backup_keep.clamp(1, 50);
     cfg.save().map_err(|e| e.to_string())?;
     Ok(cfg.clone())
 }
@@ -84,6 +92,7 @@ async fn check_update(state: State<'_, AppState>) -> Result<UpdateInfo, String> 
             latest_version: update::CURRENT_VERSION.to_string(),
             release_url: String::new(),
             notes: String::new(),
+            status: "off".to_string(),
         });
     }
     Ok(update::check_for_update().await)
@@ -510,9 +519,48 @@ async fn launch_instance(
     let cfg = state.config.lock().unwrap().clone();
     let inst = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
 
-    let child = launcher::launch::launch_instance(&app, &cfg, &inst, &account)
+    // The mods folder is put into the chosen server's shape before Java
+    // starts, because that is the only moment it can be: Fabric reads the
+    // folder once, at startup, and nothing can change the set afterwards.
+    // Same reason as apply_server_profile: a second launch of an instance that
+    // is already up would rewrite the mods folder under the running one.
+    if state.running.lock().unwrap().contains_key(&id) {
+        return Err("That instance is already running.".into());
+    }
+
+    let active = launcher::serverprofiles::load(&id).active;
+    if !active.is_empty() {
+        match launcher::serverprofiles::apply(&id, &active) {
+            Ok(applied) => {
+                if !applied.failed.is_empty() {
+                    return Err(format!(
+                        "The profile for {} could not be applied: {}",
+                        active,
+                        applied.failed.join("; ")
+                    ));
+                }
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+
+    // Before the game opens the world, not after: a copy taken while the game
+    // holds the files is a copy of a world mid-write.
+    if cfg.backup_on_launch {
+        let report = launcher::backup::run_all(&id, cfg.backup_keep.max(1) as usize);
+        for skipped in &report.skipped {
+            // Not fatal. Losing a backup is bad; refusing to let somebody play
+            // because of it is worse, so it is said out loud and play goes on.
+            eprintln!("backup skipped - {skipped}");
+        }
+    }
+
+    let join = launcher::serverprofiles::auto_join_address(&id);
+
+    let child = launcher::launch::launch_instance(&app, &cfg, &inst, &account, join.as_deref())
         .map_err(|e| e.to_string())?;
 
+    instance::mark_played(&id);
     state.running.lock().unwrap().insert(id.clone(), child);
 
     // Poll for the process ending so the console can close itself and the
@@ -711,6 +759,129 @@ async fn update_all_mods(app: tauri::AppHandle, instance_id: String) -> Result<u
     mods::update_all(&app, instance_id).await.map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// per-server mod profiles
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn list_game_servers(instance_id: String) -> Result<launcher::serverlist::ServerList, String> {
+    let inst = instance::get(&instance_id).ok_or_else(|| "Instance not found".to_string())?;
+    Ok(launcher::serverlist::read(&inst.game_dir()))
+}
+
+#[tauri::command]
+fn list_instance_mod_files(instance_id: String) -> Result<Vec<(String, bool)>, String> {
+    let inst = instance::get(&instance_id).ok_or_else(|| "Instance not found".to_string())?;
+    Ok(launcher::mods::scan_content(&inst, "mod"))
+}
+
+#[tauri::command]
+fn get_server_profiles(instance_id: String) -> Result<launcher::serverprofiles::ProfileFile, String> {
+    Ok(launcher::serverprofiles::load(&instance_id))
+}
+
+#[tauri::command]
+fn save_server_profiles(
+    instance_id: String,
+    file: launcher::serverprofiles::ProfileFile,
+) -> Result<(), String> {
+    launcher::serverprofiles::save(&instance_id, &file).map_err(|e| e.to_string())
+}
+
+/// Applying means renaming jars. Doing that under a running game is a way to
+/// break it from outside: the JVM holds those files open, and what happens next
+/// depends on the operating system rather than on anything this code decides -
+/// a rename that fails on Windows and silently succeeds elsewhere, leaving a
+/// running game whose classes no longer match the files behind them.
+///
+/// So it is refused while the instance is up. The profile still applies on the
+/// next launch, which is the only moment it can take effect anyway.
+#[tauri::command]
+async fn apply_server_profile(
+    instance_id: String,
+    address: String,
+    state: State<'_, AppState>,
+) -> Result<launcher::serverprofiles::Applied, String> {
+    if state.running.lock().unwrap().contains_key(&instance_id) {
+        return Err("Close the game first - mods cannot be switched while it is running.".into());
+    }
+    launcher::serverprofiles::apply(&instance_id, &address).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// mod compatibility and world backups
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn check_instance_mods(instance_id: String) -> Result<launcher::modcheck::ModCheck, String> {
+    Ok(launcher::modcheck::check(&instance_id))
+}
+
+#[tauri::command]
+fn list_worlds(instance_id: String) -> Result<Vec<String>, String> {
+    Ok(launcher::backup::list_worlds(&instance_id))
+}
+
+#[tauri::command]
+fn list_backups(instance_id: String) -> Result<Vec<launcher::backup::BackupEntry>, String> {
+    Ok(launcher::backup::list(&instance_id))
+}
+
+/// Packs one world, or every world when no name is given.
+#[tauri::command]
+async fn backup_world(
+    instance_id: String,
+    world: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<launcher::backup::BackupReport, String> {
+    let keep = state.config.lock().unwrap().backup_keep.max(1) as usize;
+
+    let mut report = launcher::backup::BackupReport::default();
+    match world {
+        Some(name) => match launcher::backup::create(&instance_id, &name) {
+            Ok(file) => {
+                report.made.push(file);
+                report.removed = launcher::backup::prune(&instance_id, &name, keep);
+            }
+            Err(e) => return Err(e.to_string()),
+        },
+        None => report = launcher::backup::run_all(&instance_id, keep),
+    }
+    Ok(report)
+}
+
+/// Puts a world back. Refused while the instance is running, for the same
+/// reason the mod profiles are: the game holds those files open.
+#[tauri::command]
+async fn restore_backup(
+    instance_id: String,
+    file: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    if state.running.lock().unwrap().contains_key(&instance_id) {
+        return Err("Close the game first - a world cannot be replaced while it is open.".into());
+    }
+    launcher::backup::restore(&instance_id, &file).map_err(|e| e.to_string())
+}
+
+/// Puts every mod back on. Refused while the game is running, like every other
+/// path that renames those files.
+#[tauri::command]
+async fn enable_all_mods(
+    instance_id: String,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    if state.running.lock().unwrap().contains_key(&instance_id) {
+        return Err("Close the game first - mods cannot be switched while it is running.".into());
+    }
+    launcher::serverprofiles::enable_all(&instance_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_backup(instance_id: String, file: String) -> Result<(), String> {
+    launcher::backup::remove(&instance_id, &file).map_err(|e| e.to_string())
+}
+
 fn main() {
     let config = LauncherConfig::load();
     config.ensure_dirs().ok();
@@ -772,6 +943,18 @@ fn main() {
             check_mod_updates,
             update_mod,
             update_all_mods,
+            list_game_servers,
+            list_instance_mod_files,
+            get_server_profiles,
+            save_server_profiles,
+            apply_server_profile,
+            check_instance_mods,
+            list_worlds,
+            list_backups,
+            backup_world,
+            restore_backup,
+            delete_backup,
+            enable_all_mods,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Space Client");

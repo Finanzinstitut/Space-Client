@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 use crate::launcher::instance;
+use crate::launcher::mods;
 
 /// A single thing mclo.gs recognised, with whatever it suggests doing about it.
 #[derive(Serialize, Clone)]
@@ -23,6 +24,107 @@ pub struct CrashReport {
     pub information: Vec<String>,
     /// Which file was sent, so it is obvious when the wrong one was picked up.
     pub source: String,
+    /// Installed mods whose own code appears in the log, most mentioned first.
+    pub suspects: Vec<Suspect>,
+}
+
+/// A mod that turns up in the log's own stack traces.
+///
+/// Deliberately called a suspect and not a cause. A mod appears in a trace
+/// whenever it is anywhere on the call stack, which includes every mod that was
+/// merely passing the call along when something further down broke. What this
+/// buys is a place to start: "Sodium is all over this" is a different morning
+/// from four thousand lines naming classes you have never heard of.
+#[derive(Debug, Serialize, Clone)]
+pub struct Suspect {
+    pub name: String,
+    pub filename: String,
+    /// How often its own package prefix appears.
+    pub mentions: usize,
+}
+
+
+/// The package each installed mod's code lives under, read from its own jar.
+///
+/// Taken from the entrypoints, because that is the one place a mod states which
+/// classes are its own. Matching on the mod's id instead would find its name in
+/// every "Loading mod x" line in the header and rank the whole load order as
+/// suspects.
+fn mod_packages(instance_id: &str) -> Vec<(String, String, Vec<String>)> {
+    let Some(inst) = instance::get(instance_id) else { return Vec::new() };
+    let dir = inst.content_dir("mod");
+    let mut out = Vec::new();
+
+    for (filename, enabled) in mods::scan_content(&inst, "mod") {
+        if !enabled || !filename.ends_with(".jar") {
+            continue;
+        }
+        let path = dir.join(&filename);
+        let Ok(file) = std::fs::File::open(&path) else { continue };
+        let Ok(mut archive) = zip::ZipArchive::new(file) else { continue };
+
+        let mut text = String::new();
+        {
+            let Ok(mut entry) = archive.by_name("fabric.mod.json") else { continue };
+            use std::io::Read;
+            if entry.read_to_string(&mut text).is_err() {
+                continue;
+            }
+        }
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+
+        let name = json
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&filename)
+            .to_string();
+
+        let mut packages: Vec<String> = Vec::new();
+        if let Some(entries) = json.get("entrypoints").and_then(|v| v.as_object()) {
+            for list in entries.values() {
+                let Some(items) = list.as_array() else { continue };
+                for item in items {
+                    // An entrypoint is either "a.b.C" or { "value": "a.b.C" }.
+                    let class = item
+                        .as_str()
+                        .or_else(|| item.get("value").and_then(|v| v.as_str()));
+                    let Some(class) = class else { continue };
+
+                    // Two segments is the sweet spot: "gg.spaceclient" belongs
+                    // to one mod, while "gg" alone would belong to half of them
+                    // and the full class name would only match its own crash.
+                    let prefix: Vec<&str> = class.split('.').take(2).collect();
+                    if prefix.len() == 2 {
+                        let prefix = prefix.join(".");
+                        if !packages.contains(&prefix) {
+                            packages.push(prefix);
+                        }
+                    }
+                }
+            }
+        }
+        if !packages.is_empty() {
+            out.push((name, filename, packages));
+        }
+    }
+    out
+}
+
+/// Which installed mods appear in this log, most mentioned first.
+fn find_suspects(instance_id: &str, log: &str) -> Vec<Suspect> {
+    let mut found: Vec<Suspect> = Vec::new();
+
+    for (name, filename, packages) in mod_packages(instance_id) {
+        let mentions: usize = packages.iter().map(|p| log.matches(p.as_str()).count()).sum();
+        if mentions > 0 {
+            found.push(Suspect { name, filename, mentions });
+        }
+    }
+
+    found.sort_by(|a, b| b.mentions.cmp(&a.mentions));
+    // Past a handful this stops being a lead and becomes a second log to read.
+    found.truncate(5);
+    found
 }
 
 /// The log most likely to explain a crash that just happened.
@@ -90,6 +192,11 @@ pub async fn analyse(instance_id: &str) -> Result<CrashReport> {
     if content.trim().is_empty() {
         return Err(anyhow!("{} is empty, so there is nothing to analyse.", source));
     }
+
+    // Worked out from the whole log and before anything is sent, so this part
+    // still answers when the upload service is unreachable - which is exactly
+    // the evening you most want a name to start from.
+    let suspects = find_suspects(instance_id, &content);
 
     // The service caps uploads, and the end of a log is where a crash is. A
     // truncated tail beats a rejected upload.
@@ -170,6 +277,7 @@ pub async fn analyse(instance_id: &str) -> Result<CrashReport> {
         problems,
         information,
         source,
+        suspects,
     })
 }
 

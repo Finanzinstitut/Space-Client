@@ -93,6 +93,15 @@ function showView(name) {
     v.classList.toggle("active", v.id === "view-" + name)
   );
 
+  // Read fresh on every opening rather than once at startup: the server list
+  // belongs to the game, so it changes while the launcher is running.
+  if (name === "servers") loadServerProfiles();
+  if (name === "worlds") loadBackups();
+
+  // The figure's loop stops itself whenever its canvas is off screen, so
+  // coming back to this view has to wake it rather than assume it kept going.
+  if (name === "instances") homeSkinViewer()?.redraw();
+
   // The view animates itself in; its contents follow one after another
   stagger(target.querySelectorAll(".instance-card, .mod-card, .account-row"));
 }
@@ -148,9 +157,11 @@ function renderInstances() {
     return;
   }
 
-  instances.forEach((inst) => {
+  sortedInstances().forEach((inst) => {
     const card = document.createElement("div");
     card.className = "instance-card";
+    // So the hero above can mark whichever row it is pointing at
+    card.dataset.instanceId = inst.id;
 
     const installed = !!inst.version_id && inst.version_id.length > 0 && inst.installed !== false;
     const loaderLabel =
@@ -197,11 +208,16 @@ function renderInstances() {
     playBtn.onclick = () => launchInstance(inst);
     actions.appendChild(playBtn);
 
-    const installBtn = document.createElement("button");
-    installBtn.className = "btn secondary small";
-    installBtn.textContent = t("btn_install");
-    installBtn.onclick = () => installInstance(inst);
-    actions.appendChild(installBtn);
+    // Only where there is something to install. The check was already being
+    // worked out above and then not used, so every instance offered to install
+    // itself again - including the one you had just played.
+    if (!installed) {
+      const installBtn = document.createElement("button");
+      installBtn.className = "btn secondary small";
+      installBtn.textContent = t("btn_install");
+      installBtn.onclick = () => installInstance(inst);
+      actions.appendChild(installBtn);
+    }
 
     const folderBtn = document.createElement("button");
     folderBtn.className = "btn icon-btn small";
@@ -245,7 +261,11 @@ async function refreshInstances() {
   instances = await invoke("list_instances");
   renderInstances();
   renderModsInstanceOptions();
+  renderSpInstanceOptions();
+  renderWbInstanceOptions();
   renderRunning();
+  renderHome();
+  loadHomeProfiles();
 }
 
 async function installInstance(inst) {
@@ -717,6 +737,26 @@ async function refreshRunning() {
   }
   runningIds = found;
   renderRunning();
+
+  // Everything decorative stops while a game is up. The launcher stays open
+  // beside Minecraft, and a turning figure and a breathing button are frames
+  // taken from the thing the launcher was opened to start.
+  const playing = runningIds.size > 0;
+  document.body.classList.toggle("game-running", playing);
+  // setQuiet, not setSpinning: this overrides the preferences rather than
+  // changing them, so switching back does not undo what the user chose.
+  homeSkinViewer()?.setQuiet(playing);
+}
+
+/** Hands the two motion settings to the figure and to the stylesheet. */
+function applyMotionPrefs() {
+  const motion = config?.home_motion !== false;
+  const gestures = config?.skin_animations !== false;
+  document.body.classList.toggle("no-motion", !motion);
+  if (homeViewer) {
+    homeViewer.setSpinning(motion);
+    homeViewer.setAnimations(gestures);
+  }
 }
 
 function renderRunning() {
@@ -1291,6 +1331,8 @@ $("btn-confirm-create").addEventListener("click", async () => {
 
 // ---------------- account ----------------
 function renderAccount() {
+  renderHome();
+  refreshHomeSkin();
   if (account) {
     $("account-signed-in").classList.remove("hidden");
     $("account-signed-out").classList.add("hidden");
@@ -2005,12 +2047,19 @@ $("btn-save-settings").addEventListener("click", async () => {
       language: $("language-select").value,
       checkUpdates: $("check-updates").checked,
       liveLogs: $("live-logs").checked,
+      homeMotion: $("home-motion").checked,
+      skinAnimations: $("skin-animations").checked,
+      backupOnLaunch: $("backup-on-launch").checked,
+      backupKeep: parseInt($("backup-keep").value, 10) || 5,
     });
     setLanguage(config.language);
     applyTranslations();
+    applyMotionPrefs();
     renderInstances();
     renderAccount();
     renderModsInstanceOptions();
+    renderSpInstanceOptions();
+    renderWbInstanceOptions();
     setStatus("settings-status", t("saved"), "success");
   } catch (e) {
     setStatus("settings-status", String(e), "error");
@@ -2041,8 +2090,17 @@ async function checkUpdate() {
       $("btn-update-download").onclick = () => installUpdate(info);
       $("btn-update-later").onclick = () => $("update-banner").classList.add("hidden");
     }
+    // Said out loud in the settings, where somebody who is wondering will
+    // look. Not a banner: "you are up to date" is not news, and a check that
+    // could not run is not an emergency - but neither should be silence,
+    // because silence is what "there is no update" looked like too.
+    setStatus("update-status", t("update_status_" + (info.status || "current"), {
+      v: info.latest_version,
+    }), info.status === "offline" ? "error" : "");
   } catch {
-    // A failed update check must never block playing.
+    // A failed check must never block playing - but it must not look like
+    // good news either.
+    setStatus("update-status", t("update_status_offline"), "error");
   }
 }
 
@@ -2097,6 +2155,11 @@ async function init() {
   $("language-select").value = config.language || "en";
   $("check-updates").checked = config.check_updates !== false;
   $("live-logs").checked = config.live_logs === true;
+  $("home-motion").checked = config.home_motion !== false;
+  $("skin-animations").checked = config.skin_animations !== false;
+  $("backup-on-launch").checked = config.backup_on_launch === true;
+  $("backup-keep").value = config.backup_keep || 5;
+  applyMotionPrefs();
 
   account = await invoke("get_account");
   renderAccount();
@@ -2118,3 +2181,719 @@ async function init() {
 }
 
 init();
+
+/* ===========================================================================
+ * Server profiles
+ *
+ * Which mods load for which server. The restart is not a shortcoming of this
+ * screen, it is the shape of the loader: Fabric puts every jar on the classpath
+ * before Minecraft exists and weaves mixins in as classes load, so there is
+ * nothing to unload later. Deciding the set before Java starts is the only
+ * moment that exists, and it belongs here.
+ * ======================================================================== */
+
+let spServers = [];
+let spFiles = [];
+let spData = { profiles: [], active: "" };
+
+const SP_CLIENT_MOD = "spaceclient.jar";
+
+function currentSpInstance() {
+  const id = $("sp-instance").value;
+  return instances.find((i) => i.id === id) || null;
+}
+
+function renderSpInstanceOptions() {
+  const select = $("sp-instance");
+  if (!select) return;
+  const previous = select.value;
+  select.innerHTML = "";
+  instances.forEach((inst) => {
+    const opt = document.createElement("option");
+    opt.value = inst.id;
+    opt.textContent = `${inst.name} — ${inst.mc_version} (${inst.loader})`;
+    select.appendChild(opt);
+  });
+  if (previous && instances.some((i) => i.id === previous)) select.value = previous;
+}
+
+/** The profile for whatever server is selected, made on demand but not stored
+ *  until Save - so clicking through the list does not litter the file. */
+function spCurrentProfile() {
+  const address = $("sp-server").value;
+  if (!address) return null;
+
+  let profile = spData.profiles.find((p) => p.address === address);
+  if (!profile) {
+    const known = spServers.find((s) => s.address === address);
+    profile = {
+      address,
+      name: known ? known.name : address,
+      disabled: [],
+      auto_join: false,
+    };
+  }
+  return profile;
+}
+
+async function loadServerProfiles() {
+  const inst = currentSpInstance();
+  const warning = $("sp-warning");
+  const panel = $("sp-panel");
+
+  if (!inst) {
+    warning.textContent = t("mods_no_instance");
+    warning.classList.remove("hidden");
+    panel.classList.add("hidden");
+    return;
+  }
+  warning.classList.add("hidden");
+  panel.classList.remove("hidden");
+
+  setStatus("sp-status", "");
+  try {
+    const [list, data, files] = await Promise.all([
+      invoke("list_game_servers", { instanceId: inst.id }),
+      invoke("get_server_profiles", { instanceId: inst.id }),
+      invoke("list_instance_mod_files", { instanceId: inst.id }),
+    ]);
+    spServers = list.servers || [];
+    spData = data || { profiles: [], active: "" };
+    spFiles = files || [];
+    $("sp-server-note").textContent = list.note || "";
+  } catch (e) {
+    setStatus("sp-status", String(e), "error");
+    return;
+  }
+
+  const select = $("sp-server");
+  select.innerHTML = "";
+
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = t("servers_none");
+  select.appendChild(none);
+
+  spServers.forEach((s) => {
+    const opt = document.createElement("option");
+    opt.value = s.address;
+    opt.textContent = s.name === s.address ? s.address : `${s.name} — ${s.address}`;
+    select.appendChild(opt);
+  });
+
+  // A profile whose server has since been removed in game would otherwise be
+  // invisible and still apply on launch, which is the worst of both.
+  spData.profiles
+    .filter((p) => !spServers.some((s) => s.address === p.address))
+    .forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.address;
+      opt.textContent = `${p.name || p.address} — ${t("servers_gone")}`;
+      select.appendChild(opt);
+    });
+
+  select.value = spData.active || "";
+  renderSpMods();
+}
+
+function renderSpMods() {
+  const list = $("sp-mods");
+  list.innerHTML = "";
+
+  const profile = spCurrentProfile();
+  $("sp-active").checked = !!profile && spData.active === profile.address;
+  $("sp-autojoin").checked = !!profile && !!profile.auto_join;
+  $("sp-active").disabled = !profile;
+  $("sp-autojoin").disabled = !profile;
+  $("btn-sp-all-on").disabled = !profile;
+  $("btn-sp-all-off").disabled = !profile;
+
+  if (!profile) {
+    $("sp-summary").textContent = t("servers_pick_first");
+    return;
+  }
+  if (spFiles.length === 0) {
+    $("sp-summary").textContent = "";
+    const p = document.createElement("p");
+    p.className = "empty-note";
+    p.textContent = t("servers_no_mods");
+    list.appendChild(p);
+    return;
+  }
+
+  let off = 0;
+  spFiles.forEach(([filename, enabledNow]) => {
+    const locked = filename.toLowerCase() === SP_CLIENT_MOD;
+    const willLoad = locked || !profile.disabled.includes(filename);
+    if (!willLoad) off++;
+
+    const card = document.createElement("div");
+    card.className = "mod-card";
+    card.innerHTML = `
+      <img class="mod-icon placeholder" alt="" />
+      <div class="mod-body">
+        <div class="mod-title"></div>
+        <div class="mod-meta"></div>
+      </div>
+    `;
+    card.querySelector(".mod-title").textContent = filename.replace(/\.jar$/i, "");
+
+    // Two different facts, and the screen used to show neither clearly: what
+    // this profile will do on the next launch, and what is in the mods folder
+    // right now. They differ until the profile is applied, and hiding that is
+    // how somebody ends up not knowing why the game started the way it did.
+    const meta = [];
+    meta.push(willLoad ? t("servers_will_load") : t("servers_will_park"));
+    if (locked) meta.push(t("servers_locked"));
+    else if (enabledNow !== willLoad) {
+      meta.push(enabledNow ? t("servers_now_on") : t("servers_now_off"));
+    }
+    card.querySelector(".mod-meta").textContent = meta.join(" · ");
+
+    const actions = document.createElement("div");
+    actions.className = "mod-actions";
+
+    // A real checkbox, labelled with what it controls rather than with the
+    // state it is in.
+    //
+    // It used to be a button reading "On" or "Off" - the state, not the
+    // action. Which is exactly backwards from how a button is read: you click
+    // the one that says what you want, and every click turned something off.
+    // Work through a list that way and you arrive at everything disabled,
+    // which is what happened.
+    const label = document.createElement("label");
+    label.className = "checkbox";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = willLoad;
+    box.disabled = locked;
+    box.onchange = () => {
+      if (box.checked) {
+        profile.disabled = profile.disabled.filter((f) => f !== filename);
+      } else if (!profile.disabled.includes(filename)) {
+        profile.disabled.push(filename);
+      }
+      spStage(profile);
+      renderSpMods();
+    };
+    const text = document.createElement("span");
+    text.textContent = t("servers_load_this");
+    label.appendChild(box);
+    label.appendChild(text);
+    actions.appendChild(label);
+
+    card.appendChild(actions);
+    list.appendChild(card);
+  });
+
+  const on = spFiles.length - off;
+  $("sp-summary").textContent = t("servers_summary", { on, off, total: spFiles.length });
+}
+
+/** Keeps an edited profile in the in-memory list without writing the file. */
+function spStage(profile) {
+  const at = spData.profiles.findIndex((p) => p.address === profile.address);
+  if (at >= 0) spData.profiles[at] = profile;
+  else spData.profiles.push(profile);
+}
+
+$("sp-instance").addEventListener("change", loadServerProfiles);
+$("sp-server").addEventListener("change", () => {
+  // The empty entry is a choice, not an absence of one: picking it means the
+  // next launch leaves the mods folder alone. Without this it only cleared the
+  // view and the previously active profile still applied on launch.
+  if (!$("sp-server").value) spData.active = "";
+  renderSpMods();
+});
+
+$("sp-active").addEventListener("change", () => {
+  const profile = spCurrentProfile();
+  if (!profile) return;
+  spStage(profile);
+  spData.active = $("sp-active").checked ? profile.address : "";
+});
+
+$("sp-autojoin").addEventListener("change", () => {
+  const profile = spCurrentProfile();
+  if (!profile) return;
+  profile.auto_join = $("sp-autojoin").checked;
+  spStage(profile);
+});
+
+$("btn-sp-all-on").addEventListener("click", () => {
+  const profile = spCurrentProfile();
+  if (!profile) return;
+  profile.disabled = [];
+  spStage(profile);
+  renderSpMods();
+});
+
+$("btn-sp-all-off").addEventListener("click", () => {
+  const profile = spCurrentProfile();
+  if (!profile) return;
+  // The client mod is never parked, so it is never in this list either.
+  profile.disabled = spFiles
+    .map(([filename]) => filename)
+    .filter((f) => f.toLowerCase() !== SP_CLIENT_MOD);
+  spStage(profile);
+  renderSpMods();
+});
+
+/**
+ * Puts the mods folder back to everything on.
+ *
+ * Deliberately not a profile operation. Somebody reaching for this has a mods
+ * folder in a state they did not intend and wants out of it - asking them to
+ * first understand which profile did it, edit that profile, and apply it would
+ * be asking them to operate the thing that just went wrong.
+ */
+$("btn-sp-rescue").addEventListener("click", async () => {
+  const inst = currentSpInstance();
+  if (!inst) return;
+  try {
+    const count = await invoke("enable_all_mods", { instanceId: inst.id });
+    spData.active = "";
+    await invoke("save_server_profiles", { instanceId: inst.id, file: spData });
+    setStatus("sp-status", t("servers_rescued", { count }), "success");
+    loadServerProfiles();
+  } catch (e) {
+    setStatus("sp-status", String(e), "error");
+  }
+});
+
+$("btn-sp-save").addEventListener("click", async () => {
+  const inst = currentSpInstance();
+  if (!inst) return;
+  try {
+    await invoke("save_server_profiles", { instanceId: inst.id, file: spData });
+    setStatus("sp-status", t("servers_saved"), "success");
+  } catch (e) {
+    setStatus("sp-status", String(e), "error");
+  }
+});
+
+$("btn-sp-apply").addEventListener("click", async () => {
+  const inst = currentSpInstance();
+  const profile = spCurrentProfile();
+  if (!inst || !profile) return;
+  try {
+    // Saved first: applying something other than what is on disk would leave
+    // the screen and the mods folder telling two different stories.
+    await invoke("save_server_profiles", { instanceId: inst.id, file: spData });
+    const applied = await invoke("apply_server_profile", {
+      instanceId: inst.id,
+      address: profile.address,
+    });
+    const on = applied.enabled.length;
+    const off = applied.disabled.length;
+    setStatus(
+      "sp-status",
+      on + off === 0 ? t("servers_nothing_to_do") : t("servers_applied", { on, off }),
+      applied.failed.length ? "error" : "success"
+    );
+    if (applied.failed.length) {
+      setStatus("sp-status", applied.failed.join("; "), "error");
+    }
+  } catch (e) {
+    setStatus("sp-status", String(e), "error");
+  }
+});
+
+/* ===========================================================================
+ * Home
+ *
+ * One question per screen. This one asks "play?" and everything else on the
+ * page is an answer to a question you did not ask yet.
+ * ======================================================================== */
+
+let homeViewer = null;
+
+/** The figure, built once and kept, so switching views does not reset its turn. */
+function homeSkinViewer() {
+  const canvas = $("home-skin");
+  if (!canvas) return null;
+  if (!homeViewer) {
+    // Slow on purpose. A full turn takes about twenty seconds, which reads as
+    // alive at a glance and never as something demanding to be watched.
+    homeViewer = createSkinViewer(canvas, {
+      spin: 0.32,
+      animations: config?.skin_animations !== false,
+    });
+    applyMotionPrefs();
+  }
+  return homeViewer;
+}
+
+/**
+ * Instances in the order somebody actually wants them.
+ *
+ * Most recently played first, because the launcher is opened to carry on. Ties
+ * and never-played instances fall back to name, so the list is stable between
+ * renders rather than re-ordering itself on every refresh.
+ */
+function sortedInstances() {
+  return [...instances].sort((a, b) => {
+    const played = (b.last_played || 0) - (a.last_played || 0);
+    if (played !== 0) return played;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+const HOME_PICK_KEY = "spaceclient.home.instance";
+
+function homeSelectedId() {
+  const stored = localStorage.getItem(HOME_PICK_KEY);
+  if (stored && instances.some((i) => i.id === stored)) return stored;
+  const first = sortedInstances()[0];
+  return first ? first.id : "";
+}
+
+function homeSelectedInstance() {
+  const id = $("home-instance").value || homeSelectedId();
+  return instances.find((i) => i.id === id) || null;
+}
+
+function renderHome() {
+  const select = $("home-instance");
+  if (!select) return;
+
+  const greeting = $("home-greeting");
+  const name = $("home-player");
+  if (account) {
+    greeting.textContent = t("home_greeting");
+    // username, not name: that is what the account carries, and reading the
+    // wrong one puts the word "undefined" at the top of the launcher.
+    name.textContent = account.username;
+  } else {
+    greeting.textContent = "";
+    name.textContent = t("not_signed_in");
+  }
+
+  const previous = select.value || homeSelectedId();
+  select.innerHTML = "";
+  sortedInstances().forEach((inst) => {
+    const opt = document.createElement("option");
+    opt.value = inst.id;
+    opt.textContent = inst.name;
+    select.appendChild(opt);
+  });
+  if (instances.some((i) => i.id === previous)) select.value = previous;
+
+  renderHomeDetail();
+}
+
+function renderHomeDetail() {
+  const inst = homeSelectedInstance();
+  const meta = $("home-meta");
+  const note = $("home-note");
+  const play = $("btn-play");
+  meta.innerHTML = "";
+
+  if (!inst) {
+    note.textContent = t("instances_empty");
+    play.disabled = true;
+    return;
+  }
+
+  const loaderLabel =
+    inst.loader === "vanilla"
+      ? "Vanilla"
+      : inst.loader.charAt(0).toUpperCase() + inst.loader.slice(1);
+
+  [inst.mc_version, loaderLabel, `${inst.ram_mb} MB`].forEach((text) => {
+    const chip = document.createElement("span");
+    chip.className = "tag";
+    chip.textContent = text;
+    meta.appendChild(chip);
+  });
+
+  const installed = !!inst.version_id && inst.version_id.length > 0 && inst.installed !== false;
+  play.disabled = !installed;
+
+  // The profile decides which mods this launch gets, so it belongs next to the
+  // button that starts it rather than only on the screen where it was set.
+  let line = installed ? "" : t("home_needs_install");
+  const active = homeProfileNote(inst.id);
+  if (active) line = line ? `${line} · ${active}` : active;
+  note.textContent = line;
+  renderModCheck();
+
+  // Mark the matching row below, so the two halves of the screen agree
+  document.querySelectorAll(".instance-card").forEach((card) => {
+    card.classList.toggle("is-selected", card.dataset.instanceId === inst.id);
+  });
+}
+
+/** What the saved profile will do to this launch, in one line. */
+let homeProfiles = {};
+function homeProfileNote(instanceId) {
+  const data = homeProfiles[instanceId];
+  if (!data || !data.active) return "";
+  const profile = (data.profiles || []).find((p) => p.address === data.active);
+  if (!profile) return "";
+  const off = (profile.disabled || []).length;
+  return t("home_profile", { name: profile.name || profile.address, off });
+}
+
+async function loadHomeProfiles() {
+  const wanted = instances.map((i) => i.id);
+  await Promise.all(
+    wanted.map(async (id) => {
+      try {
+        homeProfiles[id] = await invoke("get_server_profiles", { instanceId: id });
+      } catch {
+        homeProfiles[id] = null;
+      }
+    })
+  );
+  renderHomeDetail();
+}
+
+async function refreshHomeSkin() {
+  const viewer = homeSkinViewer();
+  if (!viewer || !account) return;
+  // Offline profiles have no Mojang texture to fetch, and asking for one is a
+  // request that can only fail.
+  if (account.offline) return;
+
+  try {
+    const profile = await invoke("get_skin_profile");
+    if (!profile?.skin_url) return;
+
+    // The same reading the skin screen does. variant comes back as "CLASSIC"
+    // or "SLIM" - upper case - and the cape is whichever entry in the list is
+    // marked active rather than a field of its own.
+    const slim = (profile.variant || "").toUpperCase() === "SLIM";
+    const cape = (profile.capes || []).find((c) => c.active);
+    await viewer.setSkin(profile.skin_url, slim, cape?.url || "");
+  } catch {
+    // A figure that will not load is not worth a message on the main screen
+  }
+}
+
+$("home-instance").addEventListener("change", () => {
+  localStorage.setItem(HOME_PICK_KEY, $("home-instance").value);
+  renderHomeDetail();
+});
+
+$("btn-play").addEventListener("click", () => {
+  const inst = homeSelectedInstance();
+  if (inst) launchInstance(inst);
+});
+
+$("btn-toggle-import").addEventListener("click", () => {
+  $("import-area").classList.toggle("hidden");
+});
+
+/* ===========================================================================
+ * Worlds and backups
+ *
+ * The only part of this launcher guarding against a loss nothing else can
+ * undo. A wrong mod is a rename away from fixed; a world eaten by a corrupt
+ * region file is simply gone.
+ * ======================================================================== */
+
+function currentWbInstance() {
+  const id = $("wb-instance").value;
+  return instances.find((i) => i.id === id) || null;
+}
+
+function renderWbInstanceOptions() {
+  const select = $("wb-instance");
+  if (!select) return;
+  const previous = select.value;
+  select.innerHTML = "";
+  instances.forEach((inst) => {
+    const opt = document.createElement("option");
+    opt.value = inst.id;
+    opt.textContent = `${inst.name} — ${inst.mc_version} (${inst.loader})`;
+    select.appendChild(opt);
+  });
+  if (previous && instances.some((i) => i.id === previous)) select.value = previous;
+}
+
+function ago(seconds) {
+  const mins = Math.max(0, Math.round((Date.now() / 1000 - seconds) / 60));
+  if (mins < 60) return `${mins} min`;
+  const hours = Math.round(mins / 60);
+  return hours < 48 ? `${hours} h` : `${Math.round(hours / 24)} d`;
+}
+
+function sizeMb(bytes) {
+  return bytes > 1048576
+    ? `${(bytes / 1048576).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+async function loadBackups() {
+  const inst = currentWbInstance();
+  const warning = $("wb-warning");
+  const panel = $("wb-panel");
+
+  if (!inst) {
+    warning.textContent = t("mods_no_instance");
+    warning.classList.remove("hidden");
+    panel.classList.add("hidden");
+    return;
+  }
+  warning.classList.add("hidden");
+  panel.classList.remove("hidden");
+
+  let worlds = [];
+  let backups = [];
+  try {
+    [worlds, backups] = await Promise.all([
+      invoke("list_worlds", { instanceId: inst.id }),
+      invoke("list_backups", { instanceId: inst.id }),
+    ]);
+  } catch (e) {
+    setStatus("wb-status", String(e), "error");
+    return;
+  }
+
+  $("wb-worlds").textContent = t("worlds_count", { count: worlds.length });
+
+  const list = $("wb-list");
+  list.innerHTML = "";
+  if (backups.length === 0) {
+    const p = document.createElement("p");
+    p.className = "empty-note";
+    p.textContent = t("worlds_none");
+    list.appendChild(p);
+    return;
+  }
+
+  backups.forEach((b) => {
+    const card = document.createElement("div");
+    card.className = "mod-card";
+    card.innerHTML = `
+      <img class="mod-icon placeholder" alt="" />
+      <div class="mod-body">
+        <div class="mod-title"></div>
+        <div class="mod-meta"></div>
+      </div>
+    `;
+    card.querySelector(".mod-title").textContent = b.world;
+    card.querySelector(".mod-meta").textContent = `${ago(b.made)} · ${sizeMb(b.size)} · ${b.file}`;
+
+    const actions = document.createElement("div");
+    actions.className = "mod-actions";
+
+    const restore = document.createElement("button");
+    restore.className = "btn secondary small";
+    restore.textContent = t("btn_restore");
+    restore.onclick = async () => {
+      // Asked every time. Restoring the wrong copy is an easy mistake and the
+      // one place in this launcher where a click reaches into a world.
+      if (!confirm(t("worlds_confirm_restore", { world: b.world }))) return;
+      try {
+        const world = await invoke("restore_backup", { instanceId: inst.id, file: b.file });
+        setStatus("wb-status", t("worlds_restored", { world }), "success");
+        loadBackups();
+      } catch (e) {
+        setStatus("wb-status", String(e), "error");
+      }
+    };
+
+    const drop = document.createElement("button");
+    drop.className = "btn danger small";
+    drop.textContent = t("btn_remove");
+    drop.onclick = async () => {
+      try {
+        await invoke("delete_backup", { instanceId: inst.id, file: b.file });
+        loadBackups();
+      } catch (e) {
+        setStatus("wb-status", String(e), "error");
+      }
+    };
+
+    actions.appendChild(restore);
+    actions.appendChild(drop);
+    card.appendChild(actions);
+    list.appendChild(card);
+  });
+}
+
+$("wb-instance").addEventListener("change", loadBackups);
+
+$("btn-backup-all").addEventListener("click", async () => {
+  const inst = currentWbInstance();
+  if (!inst) return;
+  const button = $("btn-backup-all");
+  button.disabled = true;
+  setStatus("wb-status", "...");
+  try {
+    const report = await invoke("backup_world", { instanceId: inst.id, world: null });
+    setStatus(
+      "wb-status",
+      report.note || t("worlds_made", { count: report.made.length }),
+      report.skipped.length ? "error" : "success"
+    );
+    if (report.skipped.length) setStatus("wb-status", report.skipped.join("; "), "error");
+    loadBackups();
+  } catch (e) {
+    setStatus("wb-status", String(e), "error");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+/* ---------------------------------------------------------------------------
+ * Mod compatibility, shown on the home screen
+ * ------------------------------------------------------------------------ */
+
+/** The three shapes of problem, written in the launcher's own language. */
+function modIssueText(issue) {
+  if (issue.kind === "minecraft") {
+    return t("modcheck_mc", { wanted: issue.wanted, have: issue.have });
+  }
+  if (issue.kind === "loader") {
+    return t("modcheck_loader", { wanted: issue.wanted, have: issue.have });
+  }
+  return t("modcheck_unreadable");
+}
+
+async function renderModCheck() {
+  const box = $("modcheck");
+  const inst = homeSelectedInstance();
+  if (!box) return;
+
+  if (!inst) {
+    box.classList.add("hidden");
+    return;
+  }
+  let result;
+  try {
+    result = await invoke("check_instance_mods", { instanceId: inst.id });
+  } catch {
+    box.classList.add("hidden");
+    return;
+  }
+
+  // Silence means "checked, nothing wrong" here, which is the one case worth
+  // saying nothing about. A note means it could not check at all, and that is
+  // also not worth a warning box on the main screen.
+  if (!result || result.issues.length === 0) {
+    box.classList.add("hidden");
+    return;
+  }
+
+  box.innerHTML = "";
+  const head = document.createElement("div");
+  head.textContent = t("modcheck_title", { count: result.issues.length });
+  box.appendChild(head);
+
+  result.issues.slice(0, 4).forEach((issue) => {
+    const line = document.createElement("div");
+    line.className = "hint";
+    line.textContent = `${issue.name} — ${modIssueText(issue)}`;
+    box.appendChild(line);
+  });
+  if (result.issues.length > 4) {
+    const more = document.createElement("div");
+    more.className = "hint";
+    more.textContent = t("modcheck_more", { count: result.issues.length - 4 });
+    box.appendChild(more);
+  }
+  box.classList.remove("hidden");
+}

@@ -9,7 +9,9 @@ const MOD_REPO: &str = "Finanzinstitut/Space-Client-Mod";
 
 /// Fixed file name, so installing a new build replaces the old one instead of
 /// leaving two versions in the folder fighting each other.
-const FILE_NAME: &str = "spaceclient.jar";
+/// Public so the server profiles can refuse to park it: switching off the
+/// client mod would take the menu that configures the profiles with it.
+pub const FILE_NAME: &str = "spaceclient.jar";
 
 fn http() -> anyhow::Result<reqwest::Client> {
     Ok(reqwest::Client::builder()
@@ -221,7 +223,7 @@ fn jar_fits(bytes: &[u8], instance: &Instance) -> Fit {
 /// more elaborate is treated as a match rather than guessed at, because
 /// refusing to install over a range this cannot parse would be a worse failure
 /// than installing something that then declines to load and says why.
-fn version_matches(range: &str, version: &str) -> bool {
+pub(crate) fn version_matches(range: &str, version: &str) -> bool {
     let range = range.trim();
 
     if range == "*" || range.is_empty() {
