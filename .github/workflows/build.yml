@@ -63,7 +63,17 @@ jobs:
       - name: Read launcher version
         id: version
         shell: bash
-        run: echo "value=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'\"' -f2)" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          # Loudly, because the quiet version of this has already cost a run:
+          # an empty value made the tag come out as "v.", a ref cannot end in a
+          # dot, and the refusal that came back named permissions rather than
+          # the name. A build that cannot say what it is should stop here.
+          if [ -z "$version" ]; then
+            echo "No version found in src-tauri/Cargo.toml" >&2
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
 
       - name: Build Space Client
         uses: tauri-apps/tauri-action@v0
