@@ -11,6 +11,14 @@ pub struct UpdateInfo {
     pub latest_version: String,
     pub release_url: String,
     pub notes: String,
+    /// What actually happened: "current", "available", "offline", "none".
+    ///
+    /// Every failure used to come back as update_available = false, which on
+    /// screen is indistinguishable from "you have the newest one". A launcher
+    /// that cannot reach GitHub and one that is up to date said exactly the
+    /// same thing, so an update that never arrived looked like no update
+    /// existing.
+    pub status: String,
 }
 
 /// Compares two dotted version strings numerically ("0.10.0" > "0.9.0").
@@ -43,6 +51,7 @@ pub async fn check_for_update() -> UpdateInfo {
         latest_version: CURRENT_VERSION.to_string(),
         release_url: format!("https://github.com/{}/releases", REPO),
         notes: String::new(),
+        status: "offline".to_string(),
     };
 
     let url = format!("https://api.github.com/repos/{}/releases/latest", REPO);
@@ -56,7 +65,12 @@ pub async fn check_for_update() -> UpdateInfo {
         Err(_) => return fallback,
     };
     if !resp.status().is_success() {
-        return fallback;
+        // 404 here means the repository has published no release at all, which
+        // is a different thing from being unreachable and worth saying so.
+        return UpdateInfo {
+            status: if resp.status().as_u16() == 404 { "none".into() } else { "offline".into() },
+            ..fallback
+        };
     }
     let json: serde_json::Value = match resp.json().await {
         Ok(j) => j,
@@ -81,12 +95,16 @@ pub async fn check_for_update() -> UpdateInfo {
         .take(500)
         .collect::<String>();
 
+    let newer = is_newer(&tag, CURRENT_VERSION);
     UpdateInfo {
-        update_available: is_newer(&tag, CURRENT_VERSION),
+        update_available: newer,
         current_version: CURRENT_VERSION.to_string(),
-        latest_version: tag.trim_start_matches('v').to_string(),
+        // Tags in this repository have been written both ways - "v1.2.0" and
+        // "v.1.1.0" - so the separator goes with the v rather than only the v.
+        latest_version: tag.trim_start_matches('v').trim_start_matches('.').to_string(),
         release_url: html_url,
         notes,
+        status: if newer { "available".into() } else { "current".into() },
     }
 }
 

@@ -246,11 +246,21 @@
 
             <p class="hint" id="sp-summary"></p>
 
+            <div class="row">
+              <button id="btn-sp-all-on" class="btn secondary small" data-i18n="servers_all_on"></button>
+              <button id="btn-sp-all-off" class="btn secondary small" data-i18n="servers_all_off"></button>
+            </div>
+
             <div id="sp-mods" class="mod-list"></div>
 
             <div class="row">
               <button id="btn-sp-save" class="btn primary small" data-i18n="servers_save"></button>
               <button id="btn-sp-apply" class="btn secondary small" data-i18n="servers_apply_now"></button>
+            </div>
+
+            <p class="hint" data-i18n="servers_rescue_hint"></p>
+            <div class="row">
+              <button id="btn-sp-rescue" class="btn secondary small" data-i18n="servers_rescue"></button>
             </div>
           </div>
 
@@ -428,6 +438,7 @@
               <input type="checkbox" id="check-updates" />
               <span data-i18n="field_updates"></span>
             </label>
+            <div id="update-status" class="status-line"></div>
           </div>
 
           <div class="field grow">

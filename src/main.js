@@ -2090,8 +2090,17 @@ async function checkUpdate() {
       $("btn-update-download").onclick = () => installUpdate(info);
       $("btn-update-later").onclick = () => $("update-banner").classList.add("hidden");
     }
+    // Said out loud in the settings, where somebody who is wondering will
+    // look. Not a banner: "you are up to date" is not news, and a check that
+    // could not run is not an emergency - but neither should be silence,
+    // because silence is what "there is no update" looked like too.
+    setStatus("update-status", t("update_status_" + (info.status || "current"), {
+      v: info.latest_version,
+    }), info.status === "offline" ? "error" : "");
   } catch {
-    // A failed update check must never block playing.
+    // A failed check must never block playing - but it must not look like
+    // good news either.
+    setStatus("update-status", t("update_status_offline"), "error");
   }
 }
 
@@ -2296,6 +2305,8 @@ function renderSpMods() {
   $("sp-autojoin").checked = !!profile && !!profile.auto_join;
   $("sp-active").disabled = !profile;
   $("sp-autojoin").disabled = !profile;
+  $("btn-sp-all-on").disabled = !profile;
+  $("btn-sp-all-off").disabled = !profile;
 
   if (!profile) {
     $("sp-summary").textContent = t("servers_pick_first");
@@ -2311,10 +2322,10 @@ function renderSpMods() {
   }
 
   let off = 0;
-  spFiles.forEach(([filename]) => {
+  spFiles.forEach(([filename, enabledNow]) => {
     const locked = filename.toLowerCase() === SP_CLIENT_MOD;
-    const disabled = !locked && profile.disabled.includes(filename);
-    if (disabled) off++;
+    const willLoad = locked || !profile.disabled.includes(filename);
+    if (!willLoad) off++;
 
     const card = document.createElement("div");
     card.className = "mod-card";
@@ -2326,35 +2337,57 @@ function renderSpMods() {
       </div>
     `;
     card.querySelector(".mod-title").textContent = filename.replace(/\.jar$/i, "");
-    card.querySelector(".mod-meta").textContent = locked ? t("servers_locked") : filename;
+
+    // Two different facts, and the screen used to show neither clearly: what
+    // this profile will do on the next launch, and what is in the mods folder
+    // right now. They differ until the profile is applied, and hiding that is
+    // how somebody ends up not knowing why the game started the way it did.
+    const meta = [];
+    meta.push(willLoad ? t("servers_will_load") : t("servers_will_park"));
+    if (locked) meta.push(t("servers_locked"));
+    else if (enabledNow !== willLoad) {
+      meta.push(enabledNow ? t("servers_now_on") : t("servers_now_off"));
+    }
+    card.querySelector(".mod-meta").textContent = meta.join(" · ");
 
     const actions = document.createElement("div");
     actions.className = "mod-actions";
 
-    const toggle = document.createElement("button");
-    toggle.className = disabled ? "btn secondary small" : "btn primary small";
-    toggle.textContent = disabled ? t("servers_off") : t("servers_on");
-    toggle.disabled = locked;
-    toggle.onclick = () => {
-      // Held in memory until Save, so a misclick costs nothing and the file on
-      // disk only ever changes when you say so.
-      if (profile.disabled.includes(filename)) {
+    // A real checkbox, labelled with what it controls rather than with the
+    // state it is in.
+    //
+    // It used to be a button reading "On" or "Off" - the state, not the
+    // action. Which is exactly backwards from how a button is read: you click
+    // the one that says what you want, and every click turned something off.
+    // Work through a list that way and you arrive at everything disabled,
+    // which is what happened.
+    const label = document.createElement("label");
+    label.className = "checkbox";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = willLoad;
+    box.disabled = locked;
+    box.onchange = () => {
+      if (box.checked) {
         profile.disabled = profile.disabled.filter((f) => f !== filename);
-      } else {
+      } else if (!profile.disabled.includes(filename)) {
         profile.disabled.push(filename);
       }
       spStage(profile);
       renderSpMods();
     };
-    actions.appendChild(toggle);
+    const text = document.createElement("span");
+    text.textContent = t("servers_load_this");
+    label.appendChild(box);
+    label.appendChild(text);
+    actions.appendChild(label);
+
     card.appendChild(actions);
     list.appendChild(card);
   });
 
-  $("sp-summary").textContent = t("servers_summary", {
-    off,
-    total: spFiles.length,
-  });
+  const on = spFiles.length - off;
+  $("sp-summary").textContent = t("servers_summary", { on, off, total: spFiles.length });
 }
 
 /** Keeps an edited profile in the in-memory list without writing the file. */
@@ -2385,6 +2418,47 @@ $("sp-autojoin").addEventListener("change", () => {
   if (!profile) return;
   profile.auto_join = $("sp-autojoin").checked;
   spStage(profile);
+});
+
+$("btn-sp-all-on").addEventListener("click", () => {
+  const profile = spCurrentProfile();
+  if (!profile) return;
+  profile.disabled = [];
+  spStage(profile);
+  renderSpMods();
+});
+
+$("btn-sp-all-off").addEventListener("click", () => {
+  const profile = spCurrentProfile();
+  if (!profile) return;
+  // The client mod is never parked, so it is never in this list either.
+  profile.disabled = spFiles
+    .map(([filename]) => filename)
+    .filter((f) => f.toLowerCase() !== SP_CLIENT_MOD);
+  spStage(profile);
+  renderSpMods();
+});
+
+/**
+ * Puts the mods folder back to everything on.
+ *
+ * Deliberately not a profile operation. Somebody reaching for this has a mods
+ * folder in a state they did not intend and wants out of it - asking them to
+ * first understand which profile did it, edit that profile, and apply it would
+ * be asking them to operate the thing that just went wrong.
+ */
+$("btn-sp-rescue").addEventListener("click", async () => {
+  const inst = currentSpInstance();
+  if (!inst) return;
+  try {
+    const count = await invoke("enable_all_mods", { instanceId: inst.id });
+    spData.active = "";
+    await invoke("save_server_profiles", { instanceId: inst.id, file: spData });
+    setStatus("sp-status", t("servers_rescued", { count }), "success");
+    loadServerProfiles();
+  } catch (e) {
+    setStatus("sp-status", String(e), "error");
+  }
 });
 
 $("btn-sp-save").addEventListener("click", async () => {

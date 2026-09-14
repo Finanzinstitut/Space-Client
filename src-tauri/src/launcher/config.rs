@@ -33,14 +33,18 @@ pub struct LauncherConfig {
     #[serde(default)]
     pub live_logs: bool,
     /// Movement on the home screen - the turning figure and the glow on the
-    /// play button. Defaults on; both stop on their own while a game is
-    /// running, so this is for people who want them gone entirely.
-    #[serde(default = "default_true")]
+    /// play button.
+    ///
+    /// Off by default. A figure that turns by itself the moment the launcher
+    /// opens is a decision made for somebody, and the people it bothers are
+    /// exactly the people who will not go looking for the switch. Anyone who
+    /// wants it finds it in the same place either way.
+    #[serde(default)]
     pub home_motion: bool,
     /// Occasional idle animations on the figure - a wave, a glance around.
-    /// Separate from home_motion because "turning is fine, acting is not" is a
-    /// reasonable thing to want.
-    #[serde(default = "default_true")]
+    /// Off for the same reason, and separately, because "turning is fine,
+    /// acting is not" is a reasonable thing to want.
+    #[serde(default)]
     pub skin_animations: bool,
     /// Pack every world in an instance before launching it.
     ///
@@ -79,8 +83,8 @@ impl Default for LauncherConfig {
             language: default_language(),
             check_updates: true,
             live_logs: false,
-            home_motion: true,
-            skin_animations: true,
+            home_motion: false,
+            skin_animations: false,
             backup_on_launch: false,
             backup_keep: 5,
         }

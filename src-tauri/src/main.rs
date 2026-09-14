@@ -92,6 +92,7 @@ async fn check_update(state: State<'_, AppState>) -> Result<UpdateInfo, String> 
             latest_version: update::CURRENT_VERSION.to_string(),
             release_url: String::new(),
             notes: String::new(),
+            status: "off".to_string(),
         });
     }
     Ok(update::check_for_update().await)
@@ -863,6 +864,19 @@ async fn restore_backup(
     launcher::backup::restore(&instance_id, &file).map_err(|e| e.to_string())
 }
 
+/// Puts every mod back on. Refused while the game is running, like every other
+/// path that renames those files.
+#[tauri::command]
+async fn enable_all_mods(
+    instance_id: String,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    if state.running.lock().unwrap().contains_key(&instance_id) {
+        return Err("Close the game first - mods cannot be switched while it is running.".into());
+    }
+    launcher::serverprofiles::enable_all(&instance_id).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn delete_backup(instance_id: String, file: String) -> Result<(), String> {
     launcher::backup::remove(&instance_id, &file).map_err(|e| e.to_string())
@@ -940,6 +954,7 @@ fn main() {
             backup_world,
             restore_backup,
             delete_backup,
+            enable_all_mods,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Space Client");

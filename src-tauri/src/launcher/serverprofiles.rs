@@ -153,3 +153,24 @@ pub fn auto_join_address(instance_id: &str) -> Option<String> {
         .find(|p| p.address == file.active && p.auto_join)
         .map(|p| p.address.clone())
 }
+
+/// Switches every mod in an instance back on, and returns how many changed.
+///
+/// The way out when a profile has left the folder somewhere unintended. It
+/// does not consult any profile: the state the folder is in is the problem, and
+/// reading the thing that produced it would be reading the wrong source.
+pub fn enable_all(instance_id: &str) -> anyhow::Result<usize> {
+    let inst = instance::get(instance_id)
+        .ok_or_else(|| anyhow::anyhow!("Instance not found"))?;
+
+    let mut changed = 0;
+    for (filename, enabled) in mods::scan_content(&inst, "mod") {
+        if enabled {
+            continue;
+        }
+        if mods::set_mod_enabled(instance_id, &filename, "mod", true).is_ok() {
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
