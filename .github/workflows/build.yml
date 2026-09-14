@@ -3,7 +3,14 @@ name: Build Space Client
 on:
   push:
     branches: [main]
+    # A tag is what publishes. tauri-action attaches the bundles it has just
+    # built, so the installer people download is the one this run produced -
+    # not one somebody extracted from an artifact afterwards.
+    tags: ["v*"]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -45,6 +52,14 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
 
+      # The tag carries the dot this repository has always written after the
+      # v, and the title does not. Both spellings are what the launcher's
+      # update check already reads, so neither is being changed here.
+      - name: Read launcher version
+        id: version
+        shell: bash
+        run: echo "value=$(grep -m1 '^version = ' src-tauri/Cargo.toml | cut -d'\"' -f2)" >> "$GITHUB_OUTPUT"
+
       - name: Build Space Client
         uses: tauri-apps/tauri-action@v0
         env:
@@ -52,6 +67,14 @@ jobs:
         with:
           projectPath: .
           args: ${{ matrix.args }}
+          # Empty off a tag, which leaves tauri-action building only. Both
+          # platforms name the same release, so the second one to finish adds
+          # its bundles to what the first one created rather than opening a
+          # second release.
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && format('v.{0}', steps.version.outputs.value) || '' }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Release v{0}', steps.version.outputs.value) || '' }}
+          releaseDraft: false
+          prerelease: false
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
