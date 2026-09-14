@@ -262,8 +262,12 @@ const ANIMATIONS = {
     const drop = t > 0.8 ? (t - 0.8) * 5 : 0;
     const raise = Math.max(0, lift - drop);
     const rock = t > 0.2 && t < 0.85 ? Math.sin(t * Math.PI * 10) * 0.3 : 0;
+    // Positive on the left arm, negative on the right. The signs were the
+    // other way round and every raised arm swung across the chest and through
+    // the head instead of out to the side - which is what a wave looked like
+    // from the front: the figure putting its hand inside itself.
     return {
-      armL: { rotZ: -raise * 2.5 - rock, rotX: -raise * 0.25 },
+      armL: { rotZ: raise * 2.5 + rock, rotX: -raise * 0.25 },
       head: { rotY: 0.2 * raise },
     };
   },
@@ -296,8 +300,8 @@ const ANIMATIONS = {
   stretch(t) {
     const up = Math.sin(Math.min(1, t) * Math.PI);
     return {
-      armR: { rotZ: up * 2.45, rotX: -up * 0.3 },
-      armL: { rotZ: -up * 2.45, rotX: -up * 0.3 },
+      armR: { rotZ: -up * 2.45, rotX: -up * 0.3 },
+      armL: { rotZ: up * 2.45, rotX: -up * 0.3 },
       head: { rotX: -up * 0.25 },
     };
   },
@@ -314,8 +318,8 @@ const ANIMATIONS = {
   shrug(t) {
     const up = Math.sin(Math.min(1, t) * Math.PI);
     return {
-      armR: { rotZ: up * 0.45, rotX: -up * 0.15 },
-      armL: { rotZ: -up * 0.45, rotX: -up * 0.15 },
+      armR: { rotZ: -up * 0.45, rotX: -up * 0.15 },
+      armL: { rotZ: up * 0.45, rotX: -up * 0.15 },
       head: { rotX: up * 0.12 },
     };
   },
@@ -724,6 +728,24 @@ export function createSkinViewer(canvas, options = {}) {
     }
   }
 
+  /**
+   * Wakes the idle loop when the window comes back.
+   *
+   * The loop stops itself whenever the page is hidden, which is right - and
+   * nothing started it again, which is why the figure sometimes simply stood
+   * there. Alt-tab away and back and it was frozen until something else
+   * happened to redraw it. Both events, because a window can be visible again
+   * without a visibilitychange and focused again without being hidden first.
+   */
+  function wake() {
+    if (moving()) {
+      state.lastTime = 0;
+      schedule();
+    }
+  }
+  document.addEventListener("visibilitychange", wake);
+  window.addEventListener("focus", wake);
+
   canvas.addEventListener("pointerdown", onDown);
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
@@ -814,6 +836,8 @@ export function createSkinViewer(canvas, options = {}) {
 
     destroy() {
       window.removeEventListener("resize", onResize);
+      document.removeEventListener("visibilitychange", wake);
+      window.removeEventListener("focus", wake);
       if (state.frame !== null) cancelAnimationFrame(state.frame);
       if (state.idleTimer !== null) clearTimeout(state.idleTimer);
     },
