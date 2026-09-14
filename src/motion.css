@@ -432,3 +432,9 @@ body.game-running .play-btn:not(:disabled)::after { animation: none; opacity: 0;
   }
   .play-btn:not(:disabled)::after { animation: none; opacity: 0; }
 }
+
+/* The home-screen motion switch, for somebody who wants the figure to hold
+   still even when nothing is running. */
+body.no-motion .play-btn:not(:disabled)::after { animation: none; opacity: 0; }
+body.no-motion .stars,
+body.no-motion .stars2 { animation: none; }

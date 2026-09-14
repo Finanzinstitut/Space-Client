@@ -60,6 +60,8 @@ async fn set_settings(
     language: String,
     check_updates: bool,
     live_logs: bool,
+    home_motion: bool,
+    skin_animations: bool,
     state: State<'_, AppState>,
 ) -> Result<LauncherConfig, String> {
     let mut cfg = state.config.lock().unwrap();
@@ -68,6 +70,8 @@ async fn set_settings(
     cfg.language = language;
     cfg.check_updates = check_updates;
     cfg.live_logs = live_logs;
+    cfg.home_motion = home_motion;
+    cfg.skin_animations = skin_animations;
     cfg.save().map_err(|e| e.to_string())?;
     Ok(cfg.clone())
 }

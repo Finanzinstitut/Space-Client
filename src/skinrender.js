@@ -117,6 +117,8 @@ function makeBox(opts) {
     tex: opts.tex || "skin",
     rotX: opts.rotX || 0,
     rotY: opts.rotY || 0,
+    /** Sideways swing. An arm lifts away from the body around this one. */
+    rotZ: opts.rotZ || 0,
     pivot: opts.pivot || [0, 0, 0],
   };
 }
@@ -205,6 +207,153 @@ function buildModel(slim, legacy, hasCape) {
   return boxes;
 }
 
+
+// ---------------- idle animations ----------------
+
+/**
+ * Where each limb turns from.
+ *
+ * A box rotates around its own pivot, and a pivot left at the centre makes an
+ * arm swing from its middle - the elbow ends up somewhere near the ear. These
+ * are the joints: the neck under the head, the shoulders and hips at the top
+ * of their limbs. Given relative to each box's own centre, which is what
+ * placeCorner expects.
+ */
+const JOINTS = {
+  head: [0, -4, 0],
+  armR: [0, 6, 0],
+  armL: [0, 6, 0],
+  legR: [0, 6, 0],
+  legL: [0, 6, 0],
+};
+
+/**
+ * The animations, as functions of their own progress from 0 to 1.
+ *
+ * Each returns the angles for whichever parts it moves, in radians, and says
+ * nothing about the rest - so two animations never fight over a limb neither
+ * of them is using, and anything unmentioned simply rests.
+ *
+ * Written as pure functions of t on purpose: there is no state to get out of
+ * step, an animation can be cut off at any point without leaving a limb
+ * somewhere odd, and the whole set can be stepped through frame by frame to
+ * look at, which is how these were checked.
+ */
+const ANIMATIONS = {
+  /** Always running underneath: the small motion of somebody simply standing. */
+  breathe(t) {
+    const s = Math.sin(t * Math.PI * 2);
+    return {
+      armR: { rotX: s * 0.05 },
+      armL: { rotX: -s * 0.05 },
+      head: { rotX: s * 0.02 },
+    };
+  },
+
+  /**
+   * The arm lifts out to the side and the hand rocks.
+   *
+   * Sideways, around Z, which is what a wave actually is - swinging the arm
+   * forward around X reads as pointing at something. The rocking is on the same
+   * axis so it looks hinged at the shoulder rather than twisting in the socket.
+   */
+  wave(t) {
+    const lift = Math.min(1, t * 4);
+    const drop = t > 0.8 ? (t - 0.8) * 5 : 0;
+    const raise = Math.max(0, lift - drop);
+    const rock = t > 0.2 && t < 0.85 ? Math.sin(t * Math.PI * 10) * 0.3 : 0;
+    return {
+      armL: { rotZ: -raise * 2.5 - rock, rotX: -raise * 0.25 },
+      head: { rotY: 0.2 * raise },
+    };
+  },
+
+  /** Looks left, then right, then front again. */
+  lookAround(t) {
+    return { head: { rotY: Math.sin(t * Math.PI * 2) * 0.6 } };
+  },
+
+  /**
+   * A nod, with a lean in it.
+   *
+   * A pure nod turns the head around the axis the camera is looking down, so
+   * almost nothing about the silhouette changes. The lean is what makes it
+   * legible from the front; the nod is what stops the lean looking like a
+   * twitch.
+   */
+  nod(t) {
+    const beat = Math.abs(Math.sin(t * Math.PI * 2));
+    // No sideways lean, however much better it would read. The model has no
+    // neck between head and torso, so tilting the head swings its lower corner
+    // clear of the shoulder and opens a gap - at which point it stops looking
+    // like a nod and starts looking like a bug. A small turn carries the
+    // movement instead: rotating about the upright axis keeps the head's base
+    // flat on the body whatever it does.
+    return { head: { rotX: beat * 0.45, rotY: Math.sin(t * Math.PI * 2) * 0.12 } };
+  },
+
+  /** Both arms up and out, the way you do after sitting too long. */
+  stretch(t) {
+    const up = Math.sin(Math.min(1, t) * Math.PI);
+    return {
+      armR: { rotZ: up * 2.45, rotX: -up * 0.3 },
+      armL: { rotZ: -up * 2.45, rotX: -up * 0.3 },
+      head: { rotX: -up * 0.25 },
+    };
+  },
+
+  /**
+   * A shrug: both arms lift away from the sides, the head sinks between them.
+   *
+   * This replaced a weight shift that swung the limbs forward and back. It was
+   * perfectly correct and nearly invisible - the camera looks straight at the
+   * figure and the projection is orthographic, so motion along the view axis
+   * barely changes the outline. Anything meant to be noticed here has to move
+   * sideways or up.
+   */
+  shrug(t) {
+    const up = Math.sin(Math.min(1, t) * Math.PI);
+    return {
+      armR: { rotZ: up * 0.45, rotX: -up * 0.15 },
+      armL: { rotZ: -up * 0.45, rotX: -up * 0.15 },
+      head: { rotX: up * 0.12 },
+    };
+  },
+
+  /** Turns to look over one shoulder and back. */
+  glance(t) {
+    const s = Math.sin(t * Math.PI);
+    return { head: { rotY: -s * 0.9, rotX: s * 0.12 } };
+  },
+};
+
+/** The ones picked at random. breathe is not among them; it always runs. */
+const IDLE_PICKS = ["wave", "lookAround", "nod", "stretch", "shrug", "glance"];
+
+/** Roughly how long each takes, in seconds. */
+const DURATIONS = {
+  wave: 2.6,
+  lookAround: 4.0,
+  nod: 1.6,
+  stretch: 3.2,
+  shrug: 2.2,
+  glance: 2.4,
+};
+
+/**
+ * Eases the ends of an animation so a limb is never snatched into position.
+ *
+ * Without this every animation begins and ends on a hard cut, which reads as a
+ * glitch rather than a movement - most visibly on stretch, where the arms would
+ * appear already halfway up.
+ */
+function blendIn(t) {
+  const edge = 0.15;
+  if (t < edge) return t / edge;
+  if (t > 1 - edge) return (1 - t) / edge;
+  return 1;
+}
+
 // ---------------- projection ----------------
 
 /**
@@ -227,6 +376,14 @@ function placeCorner(local, box) {
     const c = Math.cos(box.rotX);
     const s = Math.sin(box.rotX);
     [y, z] = [y * c - z * s, y * s + z * c];
+  }
+  // Last on purpose. The cape was placed with a Y turn and an X tilt long
+  // before this axis existed, and rotations do not commute - putting Z
+  // anywhere earlier would have quietly re-hung the cape.
+  if (box.rotZ) {
+    const c = Math.cos(box.rotZ);
+    const s = Math.sin(box.rotZ);
+    [x, y] = [x * c - y * s, x * s + y * c];
   }
 
   return [
@@ -281,8 +438,16 @@ export function createSkinViewer(canvas, options = {}) {
    */
   const minFrameMs = options.minFrameMs || 40;
 
-  /** Turned off while a game is running. Dragging still works. */
-  let spinning = true;
+  /**
+   * Three separate reasons the figure might hold still, kept apart because they
+   * answer to different people: two are preferences, one is the launcher
+   * refusing to take frames from a running game. Dragging always works.
+   */
+  let allowSpin = options.spin !== 0;
+  let allowAnimations = options.animations !== false;
+  let quiet = false;
+
+  const moving = () => !quiet && (allowSpin || allowAnimations);
 
   const state = {
     images: { skin: null, cape: null },
@@ -298,6 +463,9 @@ export function createSkinViewer(canvas, options = {}) {
     frame: null,
     idleTimer: null,
     lastTime: 0,
+    /** The gesture playing right now, if any, and when the next one is due. */
+    anim: null,
+    nextAnimAt: 3,
   };
 
   const ctx = canvas.getContext("2d");
@@ -328,12 +496,13 @@ export function createSkinViewer(canvas, options = {}) {
       const now = performance.now();
       const step = state.lastTime ? Math.min(0.1, (now - state.lastTime) / 1000) : 0;
       state.lastTime = now;
-      if (!state.dragging) state.yaw += spin * step;
+      if (!state.dragging && allowSpin && !quiet) state.yaw += spin * step;
+      applyPose(now);
 
       // A canvas in a hidden view or a minimised window animates nothing and
       // costs a whole core doing it, so the loop stops and the clock with it.
       const visible = !document.hidden && canvas.isConnected && canvas.offsetParent !== null;
-      if (visible && spinning) {
+      if (visible && moving()) {
         scheduleIdle();
       } else {
         state.lastTime = 0;
@@ -418,6 +587,92 @@ export function createSkinViewer(canvas, options = {}) {
       ctx.drawImage(quad.image, sx, sy, sw, sh, 0, 0, sw, sh);
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+
+  /** Strips the overlay suffix, so a sleeve turns with the arm inside it. */
+  function baseName(name) {
+    return name.endsWith("Over") ? name.slice(0, -4) : name;
+  }
+
+  /** Puts every animatable part back to rest and onto its joint. */
+  function restJoints() {
+    for (const box of state.model) {
+      const joint = JOINTS[baseName(box.name)];
+      if (!joint) continue;
+      box.rotX = 0;
+      box.rotY = 0;
+      box.rotZ = 0;
+      box.pivot = joint;
+    }
+  }
+
+  /** Writes a finished pose onto the boxes. */
+  function writePose(pose) {
+    for (const box of state.model) {
+      const angles = pose[baseName(box.name)];
+      if (!angles) continue;
+      box.rotX = angles.rotX;
+      box.rotY = angles.rotY;
+      box.rotZ = angles.rotZ;
+    }
+  }
+
+  function addPose(into, from, weight) {
+    for (const part of Object.keys(from)) {
+      const target = into[part] || (into[part] = { rotX: 0, rotY: 0, rotZ: 0 });
+      target.rotX += (from[part].rotX || 0) * weight;
+      target.rotY += (from[part].rotY || 0) * weight;
+      target.rotZ += (from[part].rotZ || 0) * weight;
+    }
+  }
+
+  /**
+   * Works out where every limb is this frame and writes it onto the boxes.
+   *
+   * Rest is applied first, every frame, to every part an animation could have
+   * touched. Without that a gesture that ends - or is switched off midway -
+   * leaves an arm wherever it happened to be, and the figure quietly collects
+   * a new deformity for each one.
+   */
+  function applyPose(nowMs) {
+    restJoints();
+
+    if (quiet || !allowAnimations) return;
+
+    const seconds = nowMs / 1000;
+    const pose = {};
+
+    // Always underneath: standing is not standing perfectly still.
+    addPose(pose, ANIMATIONS.breathe((seconds / 4) % 1), 1);
+
+    if (state.anim) {
+      const t = (seconds - state.anim.start) / state.anim.dur;
+      if (t >= 1) {
+        state.anim = null;
+        // A gap afterwards, so gestures do not run back to back.
+        state.nextAnimAt = seconds + 4 + Math.random() * 7;
+      } else {
+        addPose(pose, ANIMATIONS[state.anim.name](t), blendIn(t));
+      }
+    } else if (seconds >= state.nextAnimAt) {
+      const name = IDLE_PICKS[Math.floor(Math.random() * IDLE_PICKS.length)];
+      state.anim = { name, start: seconds, dur: DURATIONS[name] || 2.5 };
+    }
+
+    for (const box of state.model) {
+      const angles = pose[baseName(box.name)];
+      if (!angles) continue;
+      box.rotX = angles.rotX;
+      box.rotY = angles.rotY;
+      box.rotZ = angles.rotZ;
+    }
+  }
+
+  /** One last frame with everything at rest, after movement is switched off. */
+  function redrawRest() {
+    state.anim = null;
+    schedule();
   }
 
   function schedule() {
@@ -518,10 +773,43 @@ export function createSkinViewer(canvas, options = {}) {
      * background is taking frames from the thing it was opened to start.
      */
     setSpinning(on) {
-      if (spinning === on) return;
-      spinning = on;
+      if (allowSpin === on) return;
+      allowSpin = on;
       state.lastTime = 0;
-      if (on) schedule();
+      if (moving()) schedule(); else redrawRest();
+    },
+
+    setAnimations(on) {
+      if (allowAnimations === on) return;
+      allowAnimations = on;
+      if (moving()) schedule(); else redrawRest();
+    },
+
+    /** Everything off while a game runs, whatever the preferences say. */
+    setQuiet(on) {
+      if (quiet === on) return;
+      quiet = on;
+      state.lastTime = 0;
+      if (moving()) schedule(); else redrawRest();
+    },
+
+    /**
+     * Holds one gesture at one point in its run, for looking at.
+     *
+     * Here for the same reason the mod has a diagnostics screen: a movement
+     * that can only be judged by staring at it in motion cannot really be
+     * judged at all. This pins a single frame so each pose can be rendered and
+     * inspected - which is how the joints below were placed, and how the arm
+     * that rotated from its middle instead of its shoulder was caught.
+     */
+    previewPose(name, t) {
+      if (!ANIMATIONS[name]) return false;
+      restJoints();
+      const pose = {};
+      addPose(pose, ANIMATIONS[name](t), 1);
+      writePose(pose);
+      schedule();
+      return true;
     },
 
     destroy() {

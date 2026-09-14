@@ -741,7 +741,20 @@ async function refreshRunning() {
   // taken from the thing the launcher was opened to start.
   const playing = runningIds.size > 0;
   document.body.classList.toggle("game-running", playing);
-  homeSkinViewer()?.setSpinning(!playing);
+  // setQuiet, not setSpinning: this overrides the preferences rather than
+  // changing them, so switching back does not undo what the user chose.
+  homeSkinViewer()?.setQuiet(playing);
+}
+
+/** Hands the two motion settings to the figure and to the stylesheet. */
+function applyMotionPrefs() {
+  const motion = config?.home_motion !== false;
+  const gestures = config?.skin_animations !== false;
+  document.body.classList.toggle("no-motion", !motion);
+  if (homeViewer) {
+    homeViewer.setSpinning(motion);
+    homeViewer.setAnimations(gestures);
+  }
 }
 
 function renderRunning() {
@@ -2032,9 +2045,12 @@ $("btn-save-settings").addEventListener("click", async () => {
       language: $("language-select").value,
       checkUpdates: $("check-updates").checked,
       liveLogs: $("live-logs").checked,
+      homeMotion: $("home-motion").checked,
+      skinAnimations: $("skin-animations").checked,
     });
     setLanguage(config.language);
     applyTranslations();
+    applyMotionPrefs();
     renderInstances();
     renderAccount();
     renderModsInstanceOptions();
@@ -2125,6 +2141,9 @@ async function init() {
   $("language-select").value = config.language || "en";
   $("check-updates").checked = config.check_updates !== false;
   $("live-logs").checked = config.live_logs === true;
+  $("home-motion").checked = config.home_motion !== false;
+  $("skin-animations").checked = config.skin_animations !== false;
+  applyMotionPrefs();
 
   account = await invoke("get_account");
   renderAccount();
@@ -2415,7 +2434,11 @@ function homeSkinViewer() {
   if (!homeViewer) {
     // Slow on purpose. A full turn takes about twenty seconds, which reads as
     // alive at a glance and never as something demanding to be watched.
-    homeViewer = createSkinViewer(canvas, { spin: 0.32 });
+    homeViewer = createSkinViewer(canvas, {
+      spin: 0.32,
+      animations: config?.skin_animations !== false,
+    });
+    applyMotionPrefs();
   }
   return homeViewer;
 }

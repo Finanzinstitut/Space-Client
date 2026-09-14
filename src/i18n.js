@@ -2,6 +2,9 @@
 export const translations = {
   en: {
     nav_instances: "Instances",
+    field_home_motion: "Movement on the home screen",
+    field_skin_animations: "Let the figure move on its own",
+    motion_hint: "Both stop by themselves while a game is running, so the launcher takes no frames from it. Turn them off here to keep the figure still at all times.",
     home_playing: "Playing",
     home_greeting: "Welcome back",
     home_needs_install: "Not installed yet \u2014 install it from the list below.",
@@ -267,6 +270,9 @@ export const translations = {
 
   de: {
     nav_servers: "Server",
+    field_home_motion: "Bewegung im Startbildschirm",
+    field_skin_animations: "Figur bewegt sich von selbst",
+    motion_hint: "Beides h\u00e4lt ohnehin an, sobald ein Spiel l\u00e4uft - der Launcher nimmt ihm also keine Bilder weg. Hier abschalten, wenn die Figur dauerhaft still stehen soll.",
     home_playing: "Du spielst",
     home_greeting: "Willkommen zur\u00fcck",
     home_needs_install: "Noch nicht installiert \u2014 unten in der Liste installieren.",

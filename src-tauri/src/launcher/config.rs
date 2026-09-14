@@ -32,6 +32,16 @@ pub struct LauncherConfig {
     /// watched and killed without digging through log files.
     #[serde(default)]
     pub live_logs: bool,
+    /// Movement on the home screen - the turning figure and the glow on the
+    /// play button. Defaults on; both stop on their own while a game is
+    /// running, so this is for people who want them gone entirely.
+    #[serde(default = "default_true")]
+    pub home_motion: bool,
+    /// Occasional idle animations on the figure - a wave, a glance around.
+    /// Separate from home_motion because "turning is fine, acting is not" is a
+    /// reasonable thing to want.
+    #[serde(default = "default_true")]
+    pub skin_animations: bool,
 }
 
 fn default_language() -> String {
@@ -54,6 +64,8 @@ impl Default for LauncherConfig {
             language: default_language(),
             check_updates: true,
             live_logs: false,
+            home_motion: true,
+            skin_animations: true,
         }
     }
 }
