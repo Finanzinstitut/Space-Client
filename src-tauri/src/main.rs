@@ -62,6 +62,8 @@ async fn set_settings(
     live_logs: bool,
     home_motion: bool,
     skin_animations: bool,
+    backup_on_launch: bool,
+    backup_keep: u32,
     state: State<'_, AppState>,
 ) -> Result<LauncherConfig, String> {
     let mut cfg = state.config.lock().unwrap();
@@ -72,6 +74,8 @@ async fn set_settings(
     cfg.live_logs = live_logs;
     cfg.home_motion = home_motion;
     cfg.skin_animations = skin_animations;
+    cfg.backup_on_launch = backup_on_launch;
+    cfg.backup_keep = backup_keep.clamp(1, 50);
     cfg.save().map_err(|e| e.to_string())?;
     Ok(cfg.clone())
 }
@@ -539,6 +543,17 @@ async fn launch_instance(
         }
     }
 
+    // Before the game opens the world, not after: a copy taken while the game
+    // holds the files is a copy of a world mid-write.
+    if cfg.backup_on_launch {
+        let report = launcher::backup::run_all(&id, cfg.backup_keep.max(1) as usize);
+        for skipped in &report.skipped {
+            // Not fatal. Losing a backup is bad; refusing to let somebody play
+            // because of it is worse, so it is said out loud and play goes on.
+            eprintln!("backup skipped - {skipped}");
+        }
+    }
+
     let join = launcher::serverprofiles::auto_join_address(&id);
 
     let child = launcher::launch::launch_instance(&app, &cfg, &inst, &account, join.as_deref())
@@ -792,6 +807,67 @@ async fn apply_server_profile(
     launcher::serverprofiles::apply(&instance_id, &address).map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// mod compatibility and world backups
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn check_instance_mods(instance_id: String) -> Result<launcher::modcheck::ModCheck, String> {
+    Ok(launcher::modcheck::check(&instance_id))
+}
+
+#[tauri::command]
+fn list_worlds(instance_id: String) -> Result<Vec<String>, String> {
+    Ok(launcher::backup::list_worlds(&instance_id))
+}
+
+#[tauri::command]
+fn list_backups(instance_id: String) -> Result<Vec<launcher::backup::BackupEntry>, String> {
+    Ok(launcher::backup::list(&instance_id))
+}
+
+/// Packs one world, or every world when no name is given.
+#[tauri::command]
+async fn backup_world(
+    instance_id: String,
+    world: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<launcher::backup::BackupReport, String> {
+    let keep = state.config.lock().unwrap().backup_keep.max(1) as usize;
+
+    let mut report = launcher::backup::BackupReport::default();
+    match world {
+        Some(name) => match launcher::backup::create(&instance_id, &name) {
+            Ok(file) => {
+                report.made.push(file);
+                report.removed = launcher::backup::prune(&instance_id, &name, keep);
+            }
+            Err(e) => return Err(e.to_string()),
+        },
+        None => report = launcher::backup::run_all(&instance_id, keep),
+    }
+    Ok(report)
+}
+
+/// Puts a world back. Refused while the instance is running, for the same
+/// reason the mod profiles are: the game holds those files open.
+#[tauri::command]
+async fn restore_backup(
+    instance_id: String,
+    file: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    if state.running.lock().unwrap().contains_key(&instance_id) {
+        return Err("Close the game first - a world cannot be replaced while it is open.".into());
+    }
+    launcher::backup::restore(&instance_id, &file).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_backup(instance_id: String, file: String) -> Result<(), String> {
+    launcher::backup::remove(&instance_id, &file).map_err(|e| e.to_string())
+}
+
 fn main() {
     let config = LauncherConfig::load();
     config.ensure_dirs().ok();
@@ -858,6 +934,12 @@ fn main() {
             get_server_profiles,
             save_server_profiles,
             apply_server_profile,
+            check_instance_mods,
+            list_worlds,
+            list_backups,
+            backup_world,
+            restore_backup,
+            delete_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Space Client");

@@ -43,6 +43,7 @@
         <button class="nav-item active" data-view="instances">🚀 <span data-i18n="nav_instances"></span></button>
         <button class="nav-item" data-view="mods">🛰️ <span data-i18n="nav_mods"></span></button>
         <button class="nav-item" data-view="servers">🌐 <span data-i18n="nav_servers"></span></button>
+        <button class="nav-item" data-view="worlds">🌍 <span data-i18n="nav_worlds"></span></button>
 
         <div class="nav-group">You</div>
         <button class="nav-item" data-view="skin">🧍 <span data-i18n="nav_skin"></span></button>
@@ -87,6 +88,14 @@
             <div class="hero-note" id="home-note"></div>
           </div>
         </div>
+
+        <!--
+          Shown only when something is actually wrong. A mod built for another
+          Minecraft version does not refuse politely - it dies on a missing
+          class deep in the log - and everything needed to see it coming is
+          readable before Java starts.
+        -->
+        <div id="modcheck" class="warning-box hidden"></div>
 
         <div class="head-row">
           <div>
@@ -246,6 +255,34 @@
           </div>
 
           <div id="sp-status" class="status-line"></div>
+        </div>
+      </section>
+
+      <!-- WORLDS -->
+      <section id="view-worlds" class="view">
+        <h1 data-i18n="worlds_title"></h1>
+        <p class="subtitle" data-i18n="worlds_sub"></p>
+
+        <div class="card wide">
+          <div class="field grow">
+            <label data-i18n="mods_pick_instance"></label>
+            <select id="wb-instance"></select>
+          </div>
+
+          <div id="wb-warning" class="warning-box hidden"></div>
+
+          <div id="wb-panel">
+            <div class="row">
+              <button id="btn-backup-all" class="btn primary small" data-i18n="worlds_backup_all"></button>
+              <span id="wb-worlds" class="hint"></span>
+            </div>
+
+            <p class="hint" data-i18n="worlds_hint"></p>
+
+            <div id="wb-list" class="mod-list"></div>
+          </div>
+
+          <div id="wb-status" class="status-line"></div>
         </div>
       </section>
 
@@ -411,6 +448,16 @@
               <span data-i18n="field_skin_animations"></span>
             </label>
             <p class="hint" data-i18n="motion_hint"></p>
+          </div>
+
+          <div class="field grow">
+            <label class="checkbox">
+              <input type="checkbox" id="backup-on-launch" />
+              <span data-i18n="field_backup_launch"></span>
+            </label>
+            <label data-i18n="field_backup_keep"></label>
+            <input id="backup-keep" type="number" min="1" max="50" />
+            <p class="hint" data-i18n="backup_hint"></p>
           </div>
 
           <div class="row actions">

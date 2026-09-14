@@ -96,6 +96,7 @@ function showView(name) {
   // Read fresh on every opening rather than once at startup: the server list
   // belongs to the game, so it changes while the launcher is running.
   if (name === "servers") loadServerProfiles();
+  if (name === "worlds") loadBackups();
 
   // The figure's loop stops itself whenever its canvas is off screen, so
   // coming back to this view has to wake it rather than assume it kept going.
@@ -261,6 +262,7 @@ async function refreshInstances() {
   renderInstances();
   renderModsInstanceOptions();
   renderSpInstanceOptions();
+  renderWbInstanceOptions();
   renderRunning();
   renderHome();
   loadHomeProfiles();
@@ -2047,6 +2049,8 @@ $("btn-save-settings").addEventListener("click", async () => {
       liveLogs: $("live-logs").checked,
       homeMotion: $("home-motion").checked,
       skinAnimations: $("skin-animations").checked,
+      backupOnLaunch: $("backup-on-launch").checked,
+      backupKeep: parseInt($("backup-keep").value, 10) || 5,
     });
     setLanguage(config.language);
     applyTranslations();
@@ -2055,6 +2059,7 @@ $("btn-save-settings").addEventListener("click", async () => {
     renderAccount();
     renderModsInstanceOptions();
     renderSpInstanceOptions();
+    renderWbInstanceOptions();
     setStatus("settings-status", t("saved"), "success");
   } catch (e) {
     setStatus("settings-status", String(e), "error");
@@ -2143,6 +2148,8 @@ async function init() {
   $("live-logs").checked = config.live_logs === true;
   $("home-motion").checked = config.home_motion !== false;
   $("skin-animations").checked = config.skin_animations !== false;
+  $("backup-on-launch").checked = config.backup_on_launch === true;
+  $("backup-keep").value = config.backup_keep || 5;
   applyMotionPrefs();
 
   account = await invoke("get_account");
@@ -2535,6 +2542,7 @@ function renderHomeDetail() {
   const active = homeProfileNote(inst.id);
   if (active) line = line ? `${line} · ${active}` : active;
   note.textContent = line;
+  renderModCheck();
 
   // Mark the matching row below, so the two halves of the screen agree
   document.querySelectorAll(".instance-card").forEach((card) => {
@@ -2602,3 +2610,216 @@ $("btn-play").addEventListener("click", () => {
 $("btn-toggle-import").addEventListener("click", () => {
   $("import-area").classList.toggle("hidden");
 });
+
+/* ===========================================================================
+ * Worlds and backups
+ *
+ * The only part of this launcher guarding against a loss nothing else can
+ * undo. A wrong mod is a rename away from fixed; a world eaten by a corrupt
+ * region file is simply gone.
+ * ======================================================================== */
+
+function currentWbInstance() {
+  const id = $("wb-instance").value;
+  return instances.find((i) => i.id === id) || null;
+}
+
+function renderWbInstanceOptions() {
+  const select = $("wb-instance");
+  if (!select) return;
+  const previous = select.value;
+  select.innerHTML = "";
+  instances.forEach((inst) => {
+    const opt = document.createElement("option");
+    opt.value = inst.id;
+    opt.textContent = `${inst.name} — ${inst.mc_version} (${inst.loader})`;
+    select.appendChild(opt);
+  });
+  if (previous && instances.some((i) => i.id === previous)) select.value = previous;
+}
+
+function ago(seconds) {
+  const mins = Math.max(0, Math.round((Date.now() / 1000 - seconds) / 60));
+  if (mins < 60) return `${mins} min`;
+  const hours = Math.round(mins / 60);
+  return hours < 48 ? `${hours} h` : `${Math.round(hours / 24)} d`;
+}
+
+function sizeMb(bytes) {
+  return bytes > 1048576
+    ? `${(bytes / 1048576).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+async function loadBackups() {
+  const inst = currentWbInstance();
+  const warning = $("wb-warning");
+  const panel = $("wb-panel");
+
+  if (!inst) {
+    warning.textContent = t("mods_no_instance");
+    warning.classList.remove("hidden");
+    panel.classList.add("hidden");
+    return;
+  }
+  warning.classList.add("hidden");
+  panel.classList.remove("hidden");
+
+  let worlds = [];
+  let backups = [];
+  try {
+    [worlds, backups] = await Promise.all([
+      invoke("list_worlds", { instanceId: inst.id }),
+      invoke("list_backups", { instanceId: inst.id }),
+    ]);
+  } catch (e) {
+    setStatus("wb-status", String(e), "error");
+    return;
+  }
+
+  $("wb-worlds").textContent = t("worlds_count", { count: worlds.length });
+
+  const list = $("wb-list");
+  list.innerHTML = "";
+  if (backups.length === 0) {
+    const p = document.createElement("p");
+    p.className = "empty-note";
+    p.textContent = t("worlds_none");
+    list.appendChild(p);
+    return;
+  }
+
+  backups.forEach((b) => {
+    const card = document.createElement("div");
+    card.className = "mod-card";
+    card.innerHTML = `
+      <img class="mod-icon placeholder" alt="" />
+      <div class="mod-body">
+        <div class="mod-title"></div>
+        <div class="mod-meta"></div>
+      </div>
+    `;
+    card.querySelector(".mod-title").textContent = b.world;
+    card.querySelector(".mod-meta").textContent = `${ago(b.made)} · ${sizeMb(b.size)} · ${b.file}`;
+
+    const actions = document.createElement("div");
+    actions.className = "mod-actions";
+
+    const restore = document.createElement("button");
+    restore.className = "btn secondary small";
+    restore.textContent = t("btn_restore");
+    restore.onclick = async () => {
+      // Asked every time. Restoring the wrong copy is an easy mistake and the
+      // one place in this launcher where a click reaches into a world.
+      if (!confirm(t("worlds_confirm_restore", { world: b.world }))) return;
+      try {
+        const world = await invoke("restore_backup", { instanceId: inst.id, file: b.file });
+        setStatus("wb-status", t("worlds_restored", { world }), "success");
+        loadBackups();
+      } catch (e) {
+        setStatus("wb-status", String(e), "error");
+      }
+    };
+
+    const drop = document.createElement("button");
+    drop.className = "btn danger small";
+    drop.textContent = t("btn_remove");
+    drop.onclick = async () => {
+      try {
+        await invoke("delete_backup", { instanceId: inst.id, file: b.file });
+        loadBackups();
+      } catch (e) {
+        setStatus("wb-status", String(e), "error");
+      }
+    };
+
+    actions.appendChild(restore);
+    actions.appendChild(drop);
+    card.appendChild(actions);
+    list.appendChild(card);
+  });
+}
+
+$("wb-instance").addEventListener("change", loadBackups);
+
+$("btn-backup-all").addEventListener("click", async () => {
+  const inst = currentWbInstance();
+  if (!inst) return;
+  const button = $("btn-backup-all");
+  button.disabled = true;
+  setStatus("wb-status", "...");
+  try {
+    const report = await invoke("backup_world", { instanceId: inst.id, world: null });
+    setStatus(
+      "wb-status",
+      report.note || t("worlds_made", { count: report.made.length }),
+      report.skipped.length ? "error" : "success"
+    );
+    if (report.skipped.length) setStatus("wb-status", report.skipped.join("; "), "error");
+    loadBackups();
+  } catch (e) {
+    setStatus("wb-status", String(e), "error");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+/* ---------------------------------------------------------------------------
+ * Mod compatibility, shown on the home screen
+ * ------------------------------------------------------------------------ */
+
+/** The three shapes of problem, written in the launcher's own language. */
+function modIssueText(issue) {
+  if (issue.kind === "minecraft") {
+    return t("modcheck_mc", { wanted: issue.wanted, have: issue.have });
+  }
+  if (issue.kind === "loader") {
+    return t("modcheck_loader", { wanted: issue.wanted, have: issue.have });
+  }
+  return t("modcheck_unreadable");
+}
+
+async function renderModCheck() {
+  const box = $("modcheck");
+  const inst = homeSelectedInstance();
+  if (!box) return;
+
+  if (!inst) {
+    box.classList.add("hidden");
+    return;
+  }
+  let result;
+  try {
+    result = await invoke("check_instance_mods", { instanceId: inst.id });
+  } catch {
+    box.classList.add("hidden");
+    return;
+  }
+
+  // Silence means "checked, nothing wrong" here, which is the one case worth
+  // saying nothing about. A note means it could not check at all, and that is
+  // also not worth a warning box on the main screen.
+  if (!result || result.issues.length === 0) {
+    box.classList.add("hidden");
+    return;
+  }
+
+  box.innerHTML = "";
+  const head = document.createElement("div");
+  head.textContent = t("modcheck_title", { count: result.issues.length });
+  box.appendChild(head);
+
+  result.issues.slice(0, 4).forEach((issue) => {
+    const line = document.createElement("div");
+    line.className = "hint";
+    line.textContent = `${issue.name} — ${modIssueText(issue)}`;
+    box.appendChild(line);
+  });
+  if (result.issues.length > 4) {
+    const more = document.createElement("div");
+    more.className = "hint";
+    more.textContent = t("modcheck_more", { count: result.issues.length - 4 });
+    box.appendChild(more);
+  }
+  box.classList.remove("hidden");
+}

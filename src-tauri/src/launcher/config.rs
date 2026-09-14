@@ -42,6 +42,21 @@ pub struct LauncherConfig {
     /// reasonable thing to want.
     #[serde(default = "default_true")]
     pub skin_animations: bool,
+    /// Pack every world in an instance before launching it.
+    ///
+    /// Off by default, and that is a judgement rather than caution: on a large
+    /// world this adds seconds to every single launch, and somebody who has not
+    /// asked for it would experience their launcher getting slower for no
+    /// visible reason. It is offered where it can be understood instead.
+    #[serde(default)]
+    pub backup_on_launch: bool,
+    /// How many copies of each world to keep.
+    #[serde(default = "default_keep")]
+    pub backup_keep: u32,
+}
+
+fn default_keep() -> u32 {
+    5
 }
 
 fn default_language() -> String {
@@ -66,6 +81,8 @@ impl Default for LauncherConfig {
             live_logs: false,
             home_motion: true,
             skin_animations: true,
+            backup_on_launch: false,
+            backup_keep: 5,
         }
     }
 }

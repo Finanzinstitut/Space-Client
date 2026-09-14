@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod backup;
 pub mod clientmod;
 pub mod config;
 pub mod crash;
@@ -9,6 +10,7 @@ pub mod launch;
 pub mod loader;
 pub mod manifest;
 pub mod modpack;
+pub mod modcheck;
 pub mod mods;
 pub mod progress;
 pub mod serverlist;

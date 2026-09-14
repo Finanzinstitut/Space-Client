@@ -223,7 +223,7 @@ fn jar_fits(bytes: &[u8], instance: &Instance) -> Fit {
 /// more elaborate is treated as a match rather than guessed at, because
 /// refusing to install over a range this cannot parse would be a worse failure
 /// than installing something that then declines to load and says why.
-fn version_matches(range: &str, version: &str) -> bool {
+pub(crate) fn version_matches(range: &str, version: &str) -> bool {
     let range = range.trim();
 
     if range == "*" || range.is_empty() {
