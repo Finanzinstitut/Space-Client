@@ -208,15 +208,27 @@ function renderInstances() {
     playBtn.onclick = () => launchInstance(inst);
     actions.appendChild(playBtn);
 
-    // Only where there is something to install. The check was already being
-    // worked out above and then not used, so every instance offered to install
-    // itself again - including the one you had just played.
+    // Two different wishes, and the last version collapsed them into one: the
+    // button was hidden for anything already installed, which is exactly the
+    // case where somebody wants the newest companion mod. An instance that was
+    // never built gets Install; a built one gets the mod on its own, without
+    // the version, libraries and loader a reinstall would fetch again.
+    const canHaveMod =
+      inst.install_client_mod !== false &&
+      (inst.loader === "fabric" || inst.loader === "quilt");
     if (!installed) {
       const installBtn = document.createElement("button");
       installBtn.className = "btn secondary small";
       installBtn.textContent = t("btn_install");
       installBtn.onclick = () => installInstance(inst);
       actions.appendChild(installBtn);
+    } else if (canHaveMod) {
+      const modBtn = document.createElement("button");
+      modBtn.className = "btn secondary small";
+      modBtn.textContent = t("btn_update_mod");
+      modBtn.title = t("update_mod_hint");
+      modBtn.onclick = () => updateClientMod(inst);
+      actions.appendChild(modBtn);
     }
 
     const folderBtn = document.createElement("button");
@@ -277,6 +289,32 @@ async function installInstance(inst) {
     await refreshInstances();
   } catch (e) {
     setStatus("global-status", String(e), "error");
+  }
+}
+
+/** Fetches the newest Space Client mod into one instance.
+ *
+ *  Separate from installInstance because they cost wildly different things:
+ *  this is one jar, that is the whole instance. The progress strip is closed
+ *  here rather than left to the "done" stage, which only the version download
+ *  ever emits.
+ */
+async function updateClientMod(inst) {
+  setStatus("global-status", t("mod_updating", { name: inst.name }));
+  $("progress-wrap").classList.remove("hidden");
+  try {
+    const tag = await invoke("update_client_mod", { id: inst.id });
+    if (tag) {
+      setStatus("global-status", t("mod_updated", { version: tag }), "success");
+    } else {
+      // The release carried no jar that fits this instance. The progress line
+      // already said which, so this stays short rather than guessing again.
+      setStatus("global-status", t("mod_update_none"));
+    }
+  } catch (e) {
+    setStatus("global-status", String(e), "error");
+  } finally {
+    $("progress-wrap").classList.add("hidden");
   }
 }
 
@@ -2050,6 +2088,7 @@ $("btn-save-settings").addEventListener("click", async () => {
       homeMotion: $("home-motion").checked,
       skinAnimations: $("skin-animations").checked,
       backupOnLaunch: $("backup-on-launch").checked,
+      autoUpdateClientMod: $("auto-update-mod").checked,
       backupKeep: parseInt($("backup-keep").value, 10) || 5,
     });
     setLanguage(config.language);
@@ -2158,6 +2197,7 @@ async function init() {
   $("home-motion").checked = config.home_motion !== false;
   $("skin-animations").checked = config.skin_animations !== false;
   $("backup-on-launch").checked = config.backup_on_launch === true;
+  $("auto-update-mod").checked = config.auto_update_client_mod !== false;
   $("backup-keep").value = config.backup_keep || 5;
   applyMotionPrefs();
 
@@ -2616,7 +2656,6 @@ function renderHomeDetail() {
   const active = homeProfileNote(inst.id);
   if (active) line = line ? `${line} · ${active}` : active;
   note.textContent = line;
-  renderModCheck();
 
   // Mark the matching row below, so the two halves of the screen agree
   document.querySelectorAll(".instance-card").forEach((card) => {
@@ -2838,62 +2877,3 @@ $("btn-backup-all").addEventListener("click", async () => {
   }
 });
 
-/* ---------------------------------------------------------------------------
- * Mod compatibility, shown on the home screen
- * ------------------------------------------------------------------------ */
-
-/** The three shapes of problem, written in the launcher's own language. */
-function modIssueText(issue) {
-  if (issue.kind === "minecraft") {
-    return t("modcheck_mc", { wanted: issue.wanted, have: issue.have });
-  }
-  if (issue.kind === "loader") {
-    return t("modcheck_loader", { wanted: issue.wanted, have: issue.have });
-  }
-  return t("modcheck_unreadable");
-}
-
-async function renderModCheck() {
-  const box = $("modcheck");
-  const inst = homeSelectedInstance();
-  if (!box) return;
-
-  if (!inst) {
-    box.classList.add("hidden");
-    return;
-  }
-  let result;
-  try {
-    result = await invoke("check_instance_mods", { instanceId: inst.id });
-  } catch {
-    box.classList.add("hidden");
-    return;
-  }
-
-  // Silence means "checked, nothing wrong" here, which is the one case worth
-  // saying nothing about. A note means it could not check at all, and that is
-  // also not worth a warning box on the main screen.
-  if (!result || result.issues.length === 0) {
-    box.classList.add("hidden");
-    return;
-  }
-
-  box.innerHTML = "";
-  const head = document.createElement("div");
-  head.textContent = t("modcheck_title", { count: result.issues.length });
-  box.appendChild(head);
-
-  result.issues.slice(0, 4).forEach((issue) => {
-    const line = document.createElement("div");
-    line.className = "hint";
-    line.textContent = `${issue.name} — ${modIssueText(issue)}`;
-    box.appendChild(line);
-  });
-  if (result.issues.length > 4) {
-    const more = document.createElement("div");
-    more.className = "hint";
-    more.textContent = t("modcheck_more", { count: result.issues.length - 4 });
-    box.appendChild(more);
-  }
-  box.classList.remove("hidden");
-}

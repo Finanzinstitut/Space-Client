@@ -57,6 +57,15 @@ pub struct LauncherConfig {
     /// How many copies of each world to keep.
     #[serde(default = "default_keep")]
     pub backup_keep: u32,
+    /// Fetch the newest Space Client mod before the game starts.
+    ///
+    /// On by default: the whole point of the companion mod is that it matches
+    /// the launcher, and a build left behind is the state that produces the
+    /// confusing bug reports. It costs one small API call when the instance is
+    /// already current, and it is never fatal - no network means the game
+    /// starts with the jar that is already there.
+    #[serde(default = "default_true")]
+    pub auto_update_client_mod: bool,
 }
 
 fn default_keep() -> u32 {
@@ -87,6 +96,7 @@ impl Default for LauncherConfig {
             skin_animations: false,
             backup_on_launch: false,
             backup_keep: 5,
+            auto_update_client_mod: true,
         }
     }
 }
