@@ -50,6 +50,7 @@
         <button class="nav-item" data-view="account">👤 <span data-i18n="nav_account"></span></button>
 
         <div class="nav-group">Client</div>
+        <button class="nav-item hidden" id="nav-badges" data-view="badges">🪐 <span data-i18n="nav_badges"></span></button>
         <button class="nav-item" data-view="settings">⚙️ <span data-i18n="nav_settings"></span></button>
       </nav>
       <div class="account-chip" id="account-chip">
@@ -478,11 +479,52 @@
             <p class="hint" data-i18n="backup_hint"></p>
           </div>
 
+          <div class="field grow">
+            <label data-i18n="field_github_token"></label>
+            <div class="row">
+              <input id="github-token" type="password" autocomplete="off" spellcheck="false" class="grow" />
+              <button id="btn-save-token" class="btn" data-i18n="btn_save"></button>
+            </div>
+            <p class="hint" data-i18n="github_token_hint"></p>
+            <div id="token-status" class="status-line"></div>
+          </div>
+
           <div class="row actions">
             <button id="btn-save-settings" class="btn primary" data-i18n="btn_save"></button>
           </div>
           <div id="settings-status" class="status-line"></div>
         </div>
+      </section>
+
+      <!-- BADGES -->
+      <section id="view-badges" class="view">
+        <h1 data-i18n="badges_title"></h1>
+        <p class="hint" data-i18n="badges_intro"></p>
+
+        <div class="panel">
+          <div class="row">
+            <input id="badge-name" type="text" maxlength="16" autocomplete="off" spellcheck="false"
+                   data-i18n-ph="badge_name_ph" class="grow" />
+            <input id="badge-uuid" type="text" autocomplete="off" spellcheck="false"
+                   data-i18n-ph="badge_uuid_ph" class="grow" />
+            <select id="badge-rank">
+              <option value="owner">Owner</option>
+              <option value="dev">Dev</option>
+              <option value="vip">VIP</option>
+              <option value="standard">Standard</option>
+            </select>
+            <button id="btn-badge-add" class="btn primary" data-i18n="btn_badge_add"></button>
+          </div>
+          <p class="hint" data-i18n="badge_uuid_hint"></p>
+        </div>
+
+        <div id="badge-list" class="mod-list"></div>
+
+        <div class="row actions">
+          <button id="btn-badge-save" class="btn primary" data-i18n="btn_badge_save"></button>
+          <button id="btn-badge-reload" class="btn" data-i18n="btn_badge_reload"></button>
+        </div>
+        <div id="badge-status" class="status-line"></div>
       </section>
     </main>
   </div>

@@ -1076,3 +1076,20 @@ input.grow { flex: 1; }
 /* The profile hint sits directly above the next label, which read as one
    run-on block. Only spacing, and only in this view. */
 #view-servers .hint { margin-bottom: 14px; }
+
+/* Rank rows. Their own class rather than the mod list's, because these carry a
+   name, an identity line, a rank and a button, and all four belong on one
+   line - the mod rows are built around a different shape. */
+.badge-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-panel);
+  margin-bottom: 8px;
+}
+.badge-row .grow { min-width: 0; }
+.badge-row .mod-name { font-weight: 600; }
+.badge-row .hint { margin: 2px 0 0; word-break: break-all; }

@@ -2877,3 +2877,176 @@ $("btn-backup-all").addEventListener("click", async () => {
   }
 });
 
+
+/* ---------------------------------------------------------------------------
+ * Ranks: who wears which mark in front of their name
+ *
+ * The whole section exists only where a GitHub token is configured. The
+ * launcher goes to every player and exactly one person writes this file, so
+ * for everybody else the nav entry is not there at all.
+ * ------------------------------------------------------------------------ */
+
+const BADGE_RANKS = ["owner", "dev", "vip", "standard"];
+const BADGE_RANK_NAMES = { owner: "Owner", dev: "Dev", vip: "VIP", standard: "Standard" };
+
+let badgeEntries = [];
+let badgeSha = "";
+let badgeDirty = false;
+
+function badgeRowLabel(entry) {
+  if (entry.name && entry.uuid) return entry.name;
+  if (entry.name) return entry.name;
+  return entry.uuid;
+}
+
+function renderBadges() {
+  const list = $("badge-list");
+  if (!list) return;
+  list.innerHTML = "";
+
+  if (badgeEntries.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = t("badges_empty");
+    list.appendChild(empty);
+    return;
+  }
+
+  const order = { owner: 0, dev: 1, vip: 2, standard: 3 };
+  [...badgeEntries]
+    .sort((a, b) => (order[a.rank] ?? 9) - (order[b.rank] ?? 9)
+                 || badgeRowLabel(a).localeCompare(badgeRowLabel(b)))
+    .forEach((entry) => {
+      const row = document.createElement("div");
+      row.className = "badge-row";
+
+      const main = document.createElement("div");
+      main.className = "grow";
+
+      const name = document.createElement("div");
+      name.className = "mod-name";
+      name.textContent = badgeRowLabel(entry);
+
+      const meta = document.createElement("div");
+      meta.className = "hint";
+      // The uuid is the part worth showing: a name-only entry is the one that
+      // somebody else can take by renaming, and saying so here is cheaper than
+      // explaining it afterwards.
+      meta.textContent = entry.uuid || t("badge_name_only");
+
+      main.appendChild(name);
+      main.appendChild(meta);
+
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = BADGE_RANK_NAMES[entry.rank] || entry.rank;
+
+      const del = document.createElement("button");
+      del.className = "btn danger small";
+      del.textContent = t("btn_remove");
+      del.onclick = () => {
+        badgeEntries = badgeEntries.filter((e) => e !== entry);
+        badgeDirty = true;
+        renderBadges();
+        setStatus("badge-status", t("badges_unsaved"));
+      };
+
+      row.appendChild(main);
+      row.appendChild(tag);
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+}
+
+/** Accepts a uuid with or without dashes; returns null when it is not one. */
+function normaliseUuid(raw) {
+  const bare = raw.trim().replace(/-/g, "").toLowerCase();
+  if (bare.length === 0) return "";
+  if (!/^[0-9a-f]{32}$/.test(bare)) return null;
+  return bare.slice(0, 8) + "-" + bare.slice(8, 12) + "-" + bare.slice(12, 16)
+       + "-" + bare.slice(16, 20) + "-" + bare.slice(20);
+}
+
+async function loadBadges() {
+  setStatus("badge-status", t("badges_loading"));
+  try {
+    const result = await invoke("get_badge_list");
+    badgeEntries = result.entries || [];
+    badgeSha = result.sha || "";
+    badgeDirty = false;
+    renderBadges();
+    setStatus("badge-status", t("badges_loaded", { count: badgeEntries.length }), "success");
+  } catch (e) {
+    setStatus("badge-status", String(e), "error");
+  }
+}
+
+async function saveBadges() {
+  setStatus("badge-status", t("badges_saving"));
+  try {
+    badgeSha = await invoke("save_badge_list", { entries: badgeEntries, sha: badgeSha });
+    badgeDirty = false;
+    setStatus("badge-status", t("badges_saved"), "success");
+  } catch (e) {
+    setStatus("badge-status", String(e), "error");
+  }
+}
+
+if ($("btn-badge-add")) {
+  $("btn-badge-add").addEventListener("click", () => {
+    const name = $("badge-name").value.trim();
+    const uuid = normaliseUuid($("badge-uuid").value);
+
+    if (uuid === null) { setStatus("badge-status", t("badge_bad_uuid"), "error"); return; }
+    if (!name && !uuid) { setStatus("badge-status", t("badge_need_one"), "error"); return; }
+    if (name && !/^[A-Za-z0-9_]{3,16}$/.test(name)) {
+      setStatus("badge-status", t("badge_bad_name"), "error");
+      return;
+    }
+
+    const clash = badgeEntries.find(
+      (e) => (uuid && e.uuid === uuid)
+          || (name && e.name && e.name.toLowerCase() === name.toLowerCase()));
+    if (clash) { setStatus("badge-status", t("badge_duplicate"), "error"); return; }
+
+    badgeEntries.push({ name, uuid, rank: $("badge-rank").value });
+    badgeDirty = true;
+    $("badge-name").value = "";
+    $("badge-uuid").value = "";
+    renderBadges();
+    setStatus("badge-status", t("badges_unsaved"));
+  });
+
+  $("btn-badge-save").addEventListener("click", saveBadges);
+  $("btn-badge-reload").addEventListener("click", () => {
+    if (badgeDirty && !confirm(t("badges_discard"))) return;
+    loadBadges();
+  });
+}
+
+if ($("btn-save-token")) {
+  $("btn-save-token").addEventListener("click", async () => {
+    try {
+      const present = await invoke("set_github_token", { token: $("github-token").value });
+      $("nav-badges").classList.toggle("hidden", !present);
+      setStatus("token-status", present ? t("token_saved") : t("token_cleared"), "success");
+      if (present) loadBadges();
+    } catch (e) {
+      setStatus("token-status", String(e), "error");
+    }
+  });
+}
+
+/** Shows the section only where there is a credential that could write. */
+async function refreshBadgeAccess() {
+  if (!$("nav-badges")) return;
+  try {
+    const present = await invoke("has_github_token");
+    $("nav-badges").classList.toggle("hidden", !present);
+    if (present && badgeEntries.length === 0) loadBadges();
+  } catch {
+    $("nav-badges").classList.add("hidden");
+  }
+}
+
+refreshBadgeAccess();

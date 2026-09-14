@@ -868,6 +868,49 @@ async fn apply_server_profile(
 }
 
 // ---------------------------------------------------------------------------
+// the rank list
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn get_badge_list(
+    state: State<'_, AppState>,
+) -> Result<launcher::badgeadmin::BadgeList, String> {
+    let token = state.config.lock().unwrap().github_token.clone();
+    launcher::badgeadmin::load(&token)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_badge_list(
+    entries: Vec<launcher::badgeadmin::BadgeEntry>,
+    sha: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let token = state.config.lock().unwrap().github_token.clone();
+    launcher::badgeadmin::save(&token, entries, &sha)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Kept out of set_settings on purpose: a token is not a preference, and
+/// sending it back and forth with every unrelated settings save is one more
+/// place for it to be somewhere it does not need to be.
+#[tauri::command]
+fn set_github_token(token: String, state: State<'_, AppState>) -> Result<bool, String> {
+    let mut cfg = state.config.lock().unwrap();
+    cfg.github_token = token.trim().to_string();
+    cfg.save().map_err(|e| e.to_string())?;
+    Ok(!cfg.github_token.is_empty())
+}
+
+/// Whether the rank section should exist at all in this install.
+#[tauri::command]
+fn has_github_token(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(!state.config.lock().unwrap().github_token.is_empty())
+}
+
+// ---------------------------------------------------------------------------
 // world backups
 // ---------------------------------------------------------------------------
 
@@ -1009,6 +1052,10 @@ fn main() {
             restore_backup,
             delete_backup,
             enable_all_mods,
+            get_badge_list,
+            save_badge_list,
+            set_github_token,
+            has_github_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Space Client");

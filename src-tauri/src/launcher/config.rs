@@ -66,6 +66,13 @@ pub struct LauncherConfig {
     /// starts with the jar that is already there.
     #[serde(default = "default_true")]
     pub auto_update_client_mod: bool,
+    /// A GitHub token, for whoever maintains the rank list.
+    ///
+    /// Empty for everybody else, and the section it unlocks does not appear
+    /// without it: the launcher goes to every player, and exactly one person
+    /// has any business writing that file.
+    #[serde(default)]
+    pub github_token: String,
 }
 
 fn default_keep() -> u32 {
@@ -97,6 +104,7 @@ impl Default for LauncherConfig {
             backup_on_launch: false,
             backup_keep: 5,
             auto_update_client_mod: true,
+            github_token: String::new(),
         }
     }
 }
