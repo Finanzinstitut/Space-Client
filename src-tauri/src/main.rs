@@ -877,6 +877,15 @@ async fn apply_server_profile(
 // CurseForge, the second source
 // ---------------------------------------------------------------------------
 
+/// Whether the CurseForge source can be used here - a key from the build, or
+/// one typed into Settings. The browser asks before it offers the source.
+#[tauri::command]
+fn curseforge_ready(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(launcher::curseforge::have_key(
+        &state.config.lock().unwrap().curseforge_key,
+    ))
+}
+
 #[tauri::command]
 async fn search_curseforge(
     query: String,
@@ -886,7 +895,9 @@ async fn search_curseforge(
     offset: u32,
     state: State<'_, AppState>,
 ) -> Result<Vec<launcher::mods::ModHit>, String> {
-    let key = state.config.lock().unwrap().curseforge_key.clone();
+    let key = launcher::curseforge::effective_key(
+        &state.config.lock().unwrap().curseforge_key,
+    );
     launcher::curseforge::search(&key, query, mc_version, loader, project_type, offset)
         .await
         .map_err(|e| e.to_string())
@@ -899,7 +910,9 @@ async fn list_curseforge_files(
     loader: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<launcher::mods::ProjectVersion>, String> {
-    let key = state.config.lock().unwrap().curseforge_key.clone();
+    let key = launcher::curseforge::effective_key(
+        &state.config.lock().unwrap().curseforge_key,
+    );
     launcher::curseforge::list_versions(&key, project_id, mc_version, loader)
         .await
         .map_err(|e| e.to_string())
@@ -915,7 +928,9 @@ async fn install_curseforge_file(
     icon_url: String,
     state: State<'_, AppState>,
 ) -> Result<launcher::mods::InstalledMod, String> {
-    let key = state.config.lock().unwrap().curseforge_key.clone();
+    let key = launcher::curseforge::effective_key(
+        &state.config.lock().unwrap().curseforge_key,
+    );
     launcher::curseforge::install(
         &key, instance_id, project_id, file_id, project_type, title, icon_url,
     )
@@ -1061,6 +1076,7 @@ fn main() {
             restore_backup,
             delete_backup,
             enable_all_mods,
+            curseforge_ready,
             search_curseforge,
             list_curseforge_files,
             install_curseforge_file,

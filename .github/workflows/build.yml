@@ -79,6 +79,11 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Baked into the binary at compile time. Never in the tree: this
+          # repository is public, and a key committed to public source is a key
+          # that gets revoked. An empty secret builds a launcher whose
+          # CurseForge source asks the user for their own key instead.
+          CURSEFORGE_KEY: ${{ secrets.CURSEFORGE_KEY }}
         with:
           projectPath: .
           args: ${{ matrix.args }}

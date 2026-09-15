@@ -24,9 +24,43 @@ const API: &str = "https://api.curseforge.com/v1";
 /// down: it is in every example in their documentation.
 const GAME_MINECRAFT: u32 = 432;
 
+/// The key this build ships with, if it was given one.
+///
+/// CurseForge issues a key per approved application, and an application is
+/// meant to carry its own - that is the whole point of the third party
+/// programme, and why every launcher that offers CurseForge does this. It is
+/// put in at build time from a secret rather than written in the source,
+/// because this repository is public and a key in public source lasts about a
+/// day.
+///
+/// It is extractable from the binary by anybody willing to look, and there is
+/// no way around that for a program that runs on someone else's machine. The
+/// answer to a key being abused is to replace it, not to pretend it is hidden.
+fn baked_key() -> &'static str {
+    option_env!("CURSEFORGE_KEY").unwrap_or("")
+}
+
+/// The key to use: the one somebody typed in, or the one this build carries.
+///
+/// A typed key wins, which matters twice - somebody who would rather spend
+/// their own quota can, and if the shipped key is ever exhausted or withdrawn,
+/// there is a way out that does not need a new release.
+pub fn effective_key(user: &str) -> String {
+    if user.trim().is_empty() {
+        baked_key().to_string()
+    } else {
+        user.trim().to_string()
+    }
+}
+
+/// Whether this install can reach CurseForge at all.
+pub fn have_key(user: &str) -> bool {
+    !effective_key(user).is_empty()
+}
+
 fn http(key: &str) -> anyhow::Result<reqwest::Client> {
     if key.trim().is_empty() {
-        anyhow::bail!("No CurseForge key is set. Settings has a field for it.");
+        anyhow::bail!("This build carries no CurseForge key, and none is set in Settings.");
     }
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(

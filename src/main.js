@@ -2123,7 +2123,7 @@ $("btn-save-settings").addEventListener("click", async () => {
     setLanguage(config.language);
     applyTranslations();
     applyMotionPrefs();
-    applyModSource();
+    refreshCurseforgeReady();
     renderInstances();
     renderAccount();
     renderModsInstanceOptions();
@@ -2933,10 +2933,25 @@ function applyModSource() {
 
   const note = $("source-note");
   if (note) {
-    const needsKey = modSource === "curseforge" && !config?.curseforge_key;
+    // Asked of the backend rather than read off the local setting: most
+    // installs carry a key from the build and have nothing in Settings, and
+    // those must not be told to go and find one.
+    const needsKey = modSource === "curseforge" && curseforgeReady === false;
     note.textContent = needsKey ? t("cf_needs_key") : "";
     note.classList.toggle("hidden", !needsKey);
   }
+}
+
+/** null until asked; the note stays quiet in the meantime. */
+let curseforgeReady = null;
+
+async function refreshCurseforgeReady() {
+  try {
+    curseforgeReady = await invoke("curseforge_ready");
+  } catch {
+    curseforgeReady = false;
+  }
+  applyModSource();
 }
 
 document.querySelectorAll("#source-row .type-btn").forEach((btn) => {
@@ -2950,3 +2965,5 @@ document.querySelectorAll("#source-row .type-btn").forEach((btn) => {
 });
 
 applyModSource();
+
+refreshCurseforgeReady();
