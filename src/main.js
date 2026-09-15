@@ -1575,9 +1575,13 @@ function renderCategoryChips() {
   });
 }
 
-document.querySelectorAll(".type-btn").forEach((btn) => {
+// Scoped to its own row. The source buttons above carry their own class now,
+// but an unscoped ".type-btn" is what let a click on CurseForge run this
+// handler and set currentType to undefined - the search then went out without
+// a project type at all.
+document.querySelectorAll("#type-row .type-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".type-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll("#type-row .type-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     currentType = btn.dataset.type;
     selectedCategories = [];
@@ -2920,7 +2924,7 @@ $("btn-backup-all").addEventListener("click", async () => {
 let modSource = "modrinth";
 
 function applyModSource() {
-  document.querySelectorAll("#source-row .type-btn").forEach((btn) => {
+  document.querySelectorAll("#source-row .source-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.source === modSource);
   });
 
@@ -2954,7 +2958,7 @@ async function refreshCurseforgeReady() {
   applyModSource();
 }
 
-document.querySelectorAll("#source-row .type-btn").forEach((btn) => {
+document.querySelectorAll("#source-row .source-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     if (modSource === btn.dataset.source) return;
     modSource = btn.dataset.source;

@@ -425,14 +425,17 @@ input.grow { flex: 1; }
 
 /* ---------- content type switcher ---------- */
 .type-row { display: flex; gap: 8px; margin-bottom: 12px; }
-.type-btn {
+.type-btn,
+.source-btn {
   all: unset; cursor: pointer;
   padding: 8px 16px; border-radius: 20px; font-size: 13px;
   background: #ffffff08; border: 1px solid var(--border); color: var(--text-dim);
   transition: all .15s;
 }
-.type-btn:hover { color: var(--text); border-color: var(--accent); }
-.type-btn.active {
+.type-btn:hover,
+.source-btn:hover { color: var(--text); border-color: var(--accent); }
+.type-btn.active,
+.source-btn.active {
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
   color: #0a0820; font-weight: 600; border-color: transparent;
 }
