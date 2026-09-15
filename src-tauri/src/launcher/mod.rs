@@ -1,9 +1,9 @@
 pub mod auth;
 pub mod backup;
-pub mod badgeadmin;
 pub mod clientmod;
 pub mod config;
 pub mod crash;
+pub mod curseforge;
 pub mod download;
 pub mod instance;
 pub mod java;

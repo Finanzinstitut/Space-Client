@@ -66,13 +66,14 @@ pub struct LauncherConfig {
     /// starts with the jar that is already there.
     #[serde(default = "default_true")]
     pub auto_update_client_mod: bool,
-    /// A GitHub token, for whoever maintains the rank list.
+    /// A CurseForge API key.
     ///
-    /// Empty for everybody else, and the section it unlocks does not appear
-    /// without it: the launcher goes to every player, and exactly one person
-    /// has any business writing that file.
+    /// Theirs is the one of the two sources that will not answer without one,
+    /// and keys are issued per person rather than per application - so it has
+    /// to be a setting rather than something baked in. Empty means the source
+    /// is offered but says what it needs.
     #[serde(default)]
-    pub github_token: String,
+    pub curseforge_key: String,
 }
 
 fn default_keep() -> u32 {
@@ -104,7 +105,7 @@ impl Default for LauncherConfig {
             backup_on_launch: false,
             backup_keep: 5,
             auto_update_client_mod: true,
-            github_token: String::new(),
+            curseforge_key: String::new(),
         }
     }
 }
