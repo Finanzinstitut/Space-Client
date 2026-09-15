@@ -93,6 +93,8 @@ function showView(name) {
     v.classList.toggle("active", v.id === "view-" + name)
   );
 
+  moveNavMark();
+
   // Read fresh on every opening rather than once at startup: the server list
   // belongs to the game, so it changes while the launcher is running.
   if (name === "servers") loadServerProfiles();
@@ -105,6 +107,32 @@ function showView(name) {
   // The view animates itself in; its contents follow one after another
   stagger(target.querySelectorAll(".instance-card, .mod-card, .account-row"));
 }
+
+/*
+ * Slides the sidebar's marker to whichever entry is now selected.
+ *
+ * One bar that travels, rather than a bar per entry that fades in as another
+ * fades out. The difference is not decoration: two lights crossing reads as two
+ * things, one bar moving reads as the one indicator it actually is - and it
+ * shows you where you came from on the way.
+ *
+ * The position is measured rather than counted, so the marker cannot drift out
+ * of step with the rail when a group heading is added or an entry is hidden.
+ */
+function moveNavMark() {
+  const nav = document.querySelector(".sidebar nav");
+  const active = nav?.querySelector(".nav-item.active");
+  if (!nav || !active) return;
+
+  const top = active.offsetTop + (active.offsetHeight - 16) / 2;
+  nav.style.setProperty("--nav-mark", top + "px");
+  nav.style.setProperty("--nav-mark-shown", "1");
+}
+
+// The rail is laid out by the time this runs, but fonts are not necessarily
+// loaded, and a heading that grows by a pixel moves every entry under it.
+moveNavMark();
+window.addEventListener("load", moveNavMark);
 
 /*
  * Makes a set of elements arrive in turn.
@@ -198,7 +226,7 @@ function renderInstances() {
 
     const editBtn = document.createElement("button");
     editBtn.className = "btn icon-btn small";
-    editBtn.textContent = "✏️";
+    editBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M12.5 5.6 4 14.1V19h4.9l8.5-8.5"/><path d="M15.1 3 21 8.9"/></svg>';
     editBtn.title = t("btn_edit");
     editBtn.onclick = () => openEditModal(inst);
 
@@ -233,7 +261,7 @@ function renderInstances() {
 
     const folderBtn = document.createElement("button");
     folderBtn.className = "btn icon-btn small";
-    folderBtn.textContent = "📁";
+    folderBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M3.2 6.6a1.8 1.8 0 0 1 1.8-1.8h3.6l2 2.4h7.6a1.8 1.8 0 0 1 1.8 1.8v8.4a1.8 1.8 0 0 1-1.8 1.8H5a1.8 1.8 0 0 1-1.8-1.8z"/></svg>';
     folderBtn.title = t("btn_open_folder");
     folderBtn.onclick = async () => {
       try {
