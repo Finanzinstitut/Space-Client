@@ -1349,3 +1349,122 @@ input[type="checkbox"]:checked::after {
 .bundle-list li.bundle-installed { color: var(--success); border-color: rgba(74, 222, 128, 0.28); }
 .bundle-list li.bundle-incompatible { color: var(--warn); border-color: rgba(245, 196, 81, 0.28); }
 .bundle-list li.bundle-failed { color: var(--danger); border-color: rgba(255, 107, 107, 0.28); }
+
+/* ============================ Einstellungen als Zeilen ============================ */
+
+/*
+ * Dieselbe Anatomie wie im Spielmenue: die Zeile ist die Flaeche, links Name
+ * und Erklaerung uebereinander, rechts das Bedienelement. Vorher stand ueber
+ * jedem Feld eine Grossbuchstaben-Ueberschrift und darunter ein grauer
+ * Hinweis - drei Zeilen fuer eine Entscheidung, und die Erklaerung so weit
+ * vom Schalter entfernt, dass sie zu einer eigenen Sache wurde.
+ */
+
+.set-group { margin-bottom: 26px; }
+
+.set-head {
+  margin: 0 0 8px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-off);
+}
+
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 13px 16px;
+  margin-bottom: 5px;
+  border-radius: 10px;
+  background: rgba(15, 15, 18, 0.8);
+  border: 1px solid transparent;
+  transition: background 170ms, border-color 170ms;
+}
+.set-row:hover { background: #1c1c20; border-color: var(--border); }
+.set-row:last-child { margin-bottom: 0; }
+
+.set-text { flex: 1; min-width: 0; }
+
+.set-name { font-size: 13.5px; font-weight: 550; color: var(--text); }
+
+.set-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+/* Der Update-Status sitzt in der Beschreibungszeile und darf nicht springen. */
+.set-desc.status-line { min-height: 0; margin-top: 2px; }
+
+.set-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.set-control.wide { flex: 0 1 300px; min-width: 0; }
+.set-control.wide input { flex: 1; min-width: 0; }
+
+.set-control input[type="range"] { width: 170px; }
+.set-control input[type="number"] { width: 84px; }
+.set-control select { width: auto; min-width: 150px; }
+
+.set-value {
+  min-width: 62px;
+  text-align: right;
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--text);
+}
+
+/*
+ * Der Schalter, Zug fuer Zug wie der im Spielmenue: 30 breit, 14 hoch, der
+ * Knopf 10 mit zwei Pixeln Luft, und die Spur wird zum Akzent, waehrend er
+ * hinuebergleitet - Farbe und Ort sagen dasselbe, ein Blick auf eins von
+ * beiden reicht.
+ */
+input[type="checkbox"].switch {
+  appearance: none;
+  position: relative;
+  width: 34px; height: 18px;
+  flex: 0 0 34px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: #232327;
+  cursor: pointer;
+  transition: background 200ms;
+}
+input[type="checkbox"].switch::after {
+  content: "";
+  position: absolute;
+  left: 2px; top: 2px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #6e679a;
+  transition: transform 240ms cubic-bezier(0.65, 0, 0.35, 1), background 200ms;
+}
+input[type="checkbox"].switch:checked { background: var(--accent); }
+input[type="checkbox"].switch:checked::after {
+  transform: translateX(16px);
+  background: var(--on-accent);
+}
+/* Das Haekchen der gewoehnlichen Kaestchen gehoert hier nicht hin. */
+input[type="checkbox"].switch:checked::before { content: none; }
+
+.set-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.set-bar .status-line { margin: 0; }
+
+@media (max-width: 720px) {
+  .set-row { flex-wrap: wrap; gap: 12px; }
+  .set-control.wide { flex: 1 1 100%; }
+}
