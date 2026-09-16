@@ -265,9 +265,13 @@ async fn install_curseforge(
         anyhow::bail!("No CurseForge key available");
     }
 
+    // Das Kuerzel aus der Adresse ist nicht die Nummer, die die
+    // Schnittstelle ueberall will - also wird es einmal nachgeschlagen.
+    let project_id = curseforge::id_for_slug(key, item.id).await?;
+
     let versions = curseforge::list_versions(
         key,
-        item.id.to_string(),
+        project_id.clone(),
         inst.mc_version.clone(),
         inst.loader.clone(),
     )
@@ -282,7 +286,7 @@ async fn install_curseforge(
     curseforge::install(
         key,
         inst.id.clone(),
-        item.id.to_string(),
+        project_id,
         newest.id.clone(),
         item.project_type.to_string(),
         item.name.to_string(),
