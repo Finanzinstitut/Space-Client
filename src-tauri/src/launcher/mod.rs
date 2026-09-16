@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod backup;
+pub mod bundles;
 pub mod clientmod;
 pub mod config;
 pub mod crash;
