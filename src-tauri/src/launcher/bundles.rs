@@ -4,15 +4,17 @@
 //! um das Gegenteil - ein paar Dinge, die zusammengehoeren, ohne dass man
 //! wissen muss, wie sie heissen oder wo sie liegen.
 //!
-//! Drei Quellen, weil die drei Sachen wirklich verschieden sind:
+//! Zwei Quellen, weil die Sachen wirklich verschieden sind:
 //!
 //! * `Modrinth` laeuft ueber den vorhandenen Weg samt Abhaengigkeiten. Er sagt
 //!   von sich aus Bescheid, wenn es fuer diese Minecraft-Version nichts gibt.
-//! * `CurseForge` braucht erst eine Dateiliste, weil dort eine Datei-Nummer
-//!   installiert wird und kein Projekt. Eine leere Liste heisst: passt nicht.
-//! * `Direct` ist eine Datei an einer Adresse, fuer das, was auf keiner der
-//!   beiden Plattformen liegt. Hier steht die Liste der Minecraft-Versionen im
-//!   Eintrag, denn eine Datei kann nicht gefragt werden, wozu sie passt.
+//! * `Direct` ist eine Datei an einer Adresse, fuer das, was nicht auf
+//!   Modrinth liegt. Hier steht die Liste der Minecraft-Versionen im Eintrag,
+//!   denn eine Datei kann nicht gefragt werden, wozu sie passt.
+//!
+//! Es gab kurz einen dritten Weg ueber CurseForge, fuer No Soundcap. Der Mod
+//! liegt dort nicht, also ist er auch eine Datei geworden und der Weg wieder
+//! weg - ein Zweig, den nichts nimmt, ist keine Vorsorge, sondern Ballast.
 //!
 //! Nichts hier laedt etwas, das nicht in dieser Datei steht. Die Adressen sind
 //! fest verdrahtet, damit die Oberflaeche nur einen Namen schickt und nicht
@@ -22,12 +24,11 @@
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use crate::launcher::{curseforge, instance, mods};
+use crate::launcher::{instance, mods};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Source {
     Modrinth,
-    CurseForge,
     Direct,
 }
 
@@ -39,6 +40,12 @@ struct Item {
     /// "mod" | "resourcepack" | "shader"
     project_type: &'static str,
     /// Nur fuer `Direct`: leer heisst "passt ueberall".
+    ///
+    /// "26.2" heisst genau diese Version. "26.2.x" heisst 26.2 und alles
+    /// darunter - das ist der Unterschied zwischen "minecraft": "26.2" und
+    /// "~26.2" in einer fabric.mod.json, und wer ihn hier einebnet, legt
+    /// entweder eine Datei hin, die Fabric ablehnt, oder verweigert eine, die
+    /// laufen wuerde.
     mc_versions: &'static [&'static str],
 }
 
@@ -82,10 +89,12 @@ pub const BUNDLES: &[Bundle] = &[
             },
             Item {
                 name: "No Soundcap",
-                source: Source::CurseForge,
-                id: "no-soundcap",
+                source: Source::Direct,
+                id: "mods/no-soundcap-1.0.0.jar",
                 project_type: "mod",
-                mc_versions: &[],
+                // Die fabric.mod.json sagt "~26.2", also 26.2 und dessen
+                // Unterversionen - daher die Familie und nicht die eine Zahl.
+                mc_versions: &["26.2.x"],
             },
             Item {
                 name: "PvP Item Highlighter",
@@ -104,28 +113,28 @@ pub const BUNDLES: &[Bundle] = &[
         blocked: Some("Currently not available"),
         items: &[
             Item {
-                name: "Mace PvP Perfected (Orange)",
+                name: "Mace PvP Perfected",
                 source: Source::Modrinth,
                 id: "mace-pvp-perfected-orange",
                 project_type: "resourcepack",
                 mc_versions: &[],
             },
             Item {
-                name: "Small Food",
+                name: "Low Food",
                 source: Source::Modrinth,
                 id: "small-food",
                 project_type: "resourcepack",
                 mc_versions: &[],
             },
             Item {
-                name: "No Gust Particles",
+                name: "No Wind Charge Particles",
                 source: Source::Modrinth,
                 id: "no-gust-particles",
                 project_type: "resourcepack",
                 mc_versions: &[],
             },
             Item {
-                name: "Transparent Gust Particles",
+                name: "Better Wind Charge Particles",
                 source: Source::Modrinth,
                 id: "transparent-gust-particles",
                 project_type: "resourcepack",
@@ -165,7 +174,6 @@ pub async fn install(
     app: &AppHandle,
     instance_id: String,
     bundle_id: String,
-    curseforge_key: String,
 ) -> anyhow::Result<BundleReport> {
     let bundle = find(&bundle_id).ok_or_else(|| anyhow::anyhow!("Unknown bundle"))?;
 
@@ -182,7 +190,7 @@ pub async fn install(
     let mut report = BundleReport::default();
 
     for item in bundle.items {
-        let result = install_one(app, &inst, item, &curseforge_key).await;
+        let result = install_one(app, &inst, item).await;
         if result.outcome == "installed" {
             report.installed += 1;
         }
@@ -196,10 +204,12 @@ async fn install_one(
     app: &AppHandle,
     inst: &instance::Instance,
     item: &Item,
-    key: &str,
 ) -> ItemResult {
     let fits = item.mc_versions.is_empty()
-        || item.mc_versions.iter().any(|v| *v == inst.mc_version);
+        || item
+            .mc_versions
+            .iter()
+            .any(|want| version_fits(want, &inst.mc_version));
 
     if !fits {
         return ItemResult {
@@ -230,7 +240,6 @@ async fn install_one(
         )
         .await
         .map(|_| ()),
-        Source::CurseForge => install_curseforge(inst, item, key).await,
         Source::Direct => install_direct(inst, item).await,
     };
 
@@ -256,44 +265,12 @@ async fn install_one(
     }
 }
 
-async fn install_curseforge(
-    inst: &instance::Instance,
-    item: &Item,
-    key: &str,
-) -> anyhow::Result<()> {
-    if key.is_empty() {
-        anyhow::bail!("No CurseForge key available");
+/// Ob eine Instanz-Version zu einem Eintrag passt.
+fn version_fits(want: &str, have: &str) -> bool {
+    match want.strip_suffix(".x") {
+        Some(base) => have == base || have.starts_with(&format!("{}.", base)),
+        None => want == have,
     }
-
-    // Das Kuerzel aus der Adresse ist nicht die Nummer, die die
-    // Schnittstelle ueberall will - also wird es einmal nachgeschlagen.
-    let project_id = curseforge::id_for_slug(key, item.id).await?;
-
-    let versions = curseforge::list_versions(
-        key,
-        project_id.clone(),
-        inst.mc_version.clone(),
-        inst.loader.clone(),
-    )
-    .await?;
-
-    // Die Liste kommt schon nach Version und Loader gefiltert zurueck, also
-    // heisst leer genau eines: fuer diese Instanz gibt es nichts.
-    let newest = versions
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("No file for Minecraft {}", inst.mc_version))?;
-
-    curseforge::install(
-        key,
-        inst.id.clone(),
-        project_id,
-        newest.id.clone(),
-        item.project_type.to_string(),
-        item.name.to_string(),
-        String::new(),
-    )
-    .await
-    .map(|_| ())
 }
 
 async fn install_direct(inst: &instance::Instance, item: &Item) -> anyhow::Result<()> {
@@ -326,4 +303,52 @@ async fn install_direct(inst: &instance::Instance, item: &Item) -> anyhow::Resul
     std::fs::create_dir_all(&folder)?;
     std::fs::write(folder.join(name), &bytes)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_means_exact() {
+        // "minecraft": "26.2" in einer fabric.mod.json - 26.2.1 lehnt Fabric ab.
+        assert!(version_fits("26.2", "26.2"));
+        assert!(!version_fits("26.2", "26.2.1"));
+        assert!(!version_fits("26.2", "26.1"));
+        assert!(!version_fits("26.2", "1.21.4"));
+    }
+
+    #[test]
+    fn family_includes_the_base_and_its_patches() {
+        // "~26.2" - die Version selbst gehoert dazu, nicht nur ihre Nachkommen.
+        assert!(version_fits("26.2.x", "26.2"));
+        assert!(version_fits("26.2.x", "26.2.1"));
+        assert!(version_fits("26.2.x", "26.2.10"));
+        assert!(!version_fits("26.2.x", "26.1"));
+        assert!(!version_fits("26.2.x", "26.21"));
+    }
+
+    #[test]
+    fn every_bundle_is_reachable_and_whole() {
+        for bundle in BUNDLES {
+            assert!(!bundle.items.is_empty(), "{} ist leer", bundle.id);
+            assert!(!contents(bundle.id).is_empty());
+            for item in bundle.items {
+                assert!(!item.name.is_empty());
+                assert!(!item.id.is_empty());
+                // Ein Direkteintrag ist ein Pfad, kein Kuerzel - sonst wuerde
+                // er gegen die Wurzel der Seite laufen und eine HTML-Seite
+                // unter einem Jar-Namen ablegen.
+                if matches!(item.source, Source::Direct) {
+                    assert!(item.id.contains('/'), "{} hat keinen Pfad", item.name);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_blocked_bundle_stays_blocked() {
+        let doktor = BUNDLES.iter().find(|b| b.id == "doktorsam").unwrap();
+        assert!(doktor.blocked.is_some());
+    }
 }

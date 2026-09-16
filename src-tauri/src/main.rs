@@ -122,15 +122,10 @@ fn bundle_contents(bundle: String) -> Vec<String> {
 #[tauri::command]
 async fn install_bundle(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
     instance_id: String,
     bundle: String,
 ) -> Result<launcher::bundles::BundleReport, String> {
-    let key = {
-        let cfg = state.config.lock().unwrap();
-        launcher::curseforge::effective_key(&cfg.curseforge_key)
-    };
-    launcher::bundles::install(&app, instance_id, bundle, key)
+    launcher::bundles::install(&app, instance_id, bundle)
         .await
         .map_err(|e| e.to_string())
 }
