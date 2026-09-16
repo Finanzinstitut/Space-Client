@@ -1261,3 +1261,91 @@ input[type="checkbox"]:checked::after {
 /* ============================ utility ============================ */
 
 .hidden { display: none !important; }
+
+/* ============================ Pakete in der Leiste ============================ */
+
+/*
+ * Kleiner als die Eintraege darueber, und eingerueckt: das sind Griffe, keine
+ * Orte. Eine Leiste, in der alles gleich schwer wiegt, sieht aus, als haette
+ * der Client zehn Seiten.
+ */
+.nav-extras {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 2px;
+  padding-left: 10px;
+}
+
+.nav-extra {
+  position: relative;
+  padding: 7px 10px 7px 14px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-off);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  transition: background 160ms, color 160ms;
+}
+
+/* Ein Strich am Anfang, damit die drei als eine Gruppe lesbar sind. */
+.nav-extra::before {
+  content: "";
+  position: absolute;
+  left: 4px; top: 50%;
+  width: 3px; height: 3px;
+  margin-top: -1px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+.nav-extra:hover { background: rgba(255, 255, 255, 0.05); color: var(--text-dim); }
+
+/* Ausgegraut, aber anklickbar: der Klick sagt, warum es noch nicht geht. */
+.nav-extra.is-off { opacity: 0.45; }
+.nav-extra.is-off:hover { color: var(--text-off); }
+
+/* ============================ Paket-Fenster ============================ */
+
+.bundle-text { margin: 0 0 14px; color: var(--text-dim); font-size: 13.5px; line-height: 1.55; }
+
+.bundle-warning {
+  margin: 0 0 16px;
+  padding: 11px 14px;
+  border-radius: var(--r-md);
+  background: rgba(255, 107, 107, 0.09);
+  border: 1px solid rgba(255, 107, 107, 0.28);
+  color: var(--danger);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.bundle-credits { margin: 14px 0 0; font-size: 12px; color: var(--text-off); }
+
+.bundle-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.bundle-list li {
+  padding: 8px 12px;
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+/* Das Ergebnis je Zeile, nachdem installiert wurde. */
+.bundle-list li.bundle-installed { color: var(--success); border-color: rgba(74, 222, 128, 0.28); }
+.bundle-list li.bundle-incompatible { color: var(--warn); border-color: rgba(245, 196, 81, 0.28); }
+.bundle-list li.bundle-failed { color: var(--danger); border-color: rgba(255, 107, 107, 0.28); }

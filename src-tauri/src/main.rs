@@ -108,6 +108,33 @@ async fn download_update() -> Result<String, String> {
     update::download_update().await.map_err(|e| e.to_string())
 }
 
+/// Was in einem Paket steckt, damit das Fenster es aufzaehlen kann.
+#[tauri::command]
+fn bundle_contents(bundle: String) -> Vec<String> {
+    launcher::bundles::contents(&bundle)
+}
+
+/// Installiert ein fertiges Paket in eine Instanz.
+///
+/// Die Seite schickt einen Paketnamen, keine Adresse. Welche Dateien dazu
+/// gehoeren, steht in bundles.rs - sonst waere das hier ein Befehl, der alles
+/// herunterlaedt, was man ihm nennt.
+#[tauri::command]
+async fn install_bundle(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    instance_id: String,
+    bundle: String,
+) -> Result<launcher::bundles::BundleReport, String> {
+    let key = {
+        let cfg = state.config.lock().unwrap();
+        launcher::curseforge::effective_key(&cfg.curseforge_key)
+    };
+    launcher::bundles::install(&app, instance_id, bundle, key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Starts the downloaded installer and steps aside so it can replace us.
 #[tauri::command]
 async fn run_installer(app: tauri::AppHandle) -> Result<(), String> {
@@ -1021,6 +1048,8 @@ fn main() {
             set_settings,
             check_update,
             download_update,
+            bundle_contents,
+            install_bundle,
             run_installer,
             get_account,
             start_login,

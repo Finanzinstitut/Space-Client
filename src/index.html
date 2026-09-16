@@ -42,6 +42,18 @@
         <div class="nav-group">Play</div>
         <button class="nav-item active" data-view="instances"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg><span data-i18n="nav_instances"></span></button>
         <button class="nav-item" data-view="mods"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.6 21 7.3v9.4L12 21.4 3 16.7V7.3z"/><path d="M3.3 7.3 12 12l8.7-4.7M12 12v9.4"/></svg><span data-i18n="nav_mods"></span></button>
+        <!--
+          Drei fertige Zusammenstellungen, unter dem Mods-Eintrag, weil sie
+          dasselbe tun wie er - nur ohne dass man wissen muss, wonach man
+          sucht. Bewusst kleiner als die Eintraege darueber: es sind Griffe,
+          keine Orte, und die Leiste soll nicht aussehen, als haette sie
+          zehn Seiten.
+        -->
+        <div class="nav-extras">
+          <button class="nav-extra" data-bundle="umbaria">Download Custom PVP Ressourcenpack</button>
+          <button class="nav-extra" data-bundle="finanzinstitut">Finanzinstitut's best creations</button>
+          <button class="nav-extra is-off" data-bundle="doktorsam">DoktorSam's PvP textures</button>
+        </div>
         <button class="nav-item" data-view="servers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.4 2.5 3.6 5.5 3.6 9S14.4 18.5 12 21c-2.4-2.5-3.6-5.5-3.6-9S9.6 5.5 12 3z"/></svg><span data-i18n="nav_servers"></span></button>
         <button class="nav-item" data-view="worlds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 20.5 8v8L12 20.8 3.5 16V8z"/><path d="M12 12v8.8M12 12 3.5 8M12 12l8.5-4"/></svg><span data-i18n="nav_worlds"></span></button>
 
@@ -658,6 +670,33 @@
   </div>
 
   <!-- UPDATE BANNER -->
+  <div id="bundle-backdrop" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2 id="bundle-title"></h2>
+      <p id="bundle-text" class="bundle-text"></p>
+
+      <!-- Rot, weil es der Satz ist, den man ueberliest und dann sucht. -->
+      <p id="bundle-warning" class="bundle-warning hidden"></p>
+
+      <div class="field grow" id="bundle-instance-field">
+        <label data-i18n="mods_pick_instance"></label>
+        <select id="bundle-instance"></select>
+      </div>
+
+      <div class="field grow">
+        <label data-i18n="bundle_contains"></label>
+        <ul id="bundle-list" class="bundle-list"></ul>
+      </div>
+
+      <p id="bundle-credits" class="bundle-credits"></p>
+
+      <div class="row actions">
+        <button id="btn-bundle-cancel" class="btn secondary">Cancel</button>
+        <button id="btn-bundle-install" class="btn primary">Install Essentials</button>
+      </div>
+      <div id="bundle-status" class="status-line"></div>
+    </div>
+  </div>
   <div id="update-banner" class="update-banner hidden">
     <div>
       <strong data-i18n="update_available"></strong>

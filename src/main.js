@@ -2999,3 +2999,163 @@ document.querySelectorAll("#source-row .source-btn").forEach((btn) => {
 applyModSource();
 
 refreshCurseforgeReady();
+
+// ---------------- fertige Zusammenstellungen ----------------
+
+/*
+ * Drei Knoepfe unter dem Mods-Eintrag, je ein Fenster davor.
+ *
+ * Das Fenster kommt immer, auch beim gesperrten Knopf. Ein Knopf, der auf
+ * einen Klick nichts tut, ist von einem kaputten nicht zu unterscheiden -
+ * deshalb sagt dieser, dass es ihn noch nicht gibt, statt zu schweigen.
+ *
+ * Was tatsaechlich installiert wird, steht im Rust-Teil. Diese Seite schickt
+ * einen Paketnamen; sie koennte gar keine Adresse schicken, und das ist der
+ * Grund, warum sie es nicht kann.
+ */
+const BUNDLES = {
+  umbaria: {
+    title: "Download Custom PVP Ressourcenpack",
+    text:
+      "Lädt ein Ressourcenpack herunter und legt es in die ausgewählte Instanz.",
+    warning:
+      "Das ist ein Ressourcenpack — es muss im Spiel unter Optionen → Ressourcenpakete noch aktiviert werden.",
+    credits: "Credits: real_Umbaria",
+  },
+  finanzinstitut: {
+    title: "Finanzinstitut's best creations",
+    text:
+      "When you're pressing install you're installing all mods created by Finanzinstitut.",
+    warning: "",
+    credits: "Credits: Finanzinstitut",
+  },
+  doktorsam: {
+    title: "DoktorSam's PvP textures",
+    text:
+      "Lädt alle Ressourcenpacks von DoktorSam herunter und legt sie in die ausgewählte Instanz.",
+    warning:
+      "Das sind Ressourcenpacks — sie müssen im Spiel unter Optionen → Ressourcenpakete noch aktiviert werden.",
+    credits: "Credits: DoktorSam",
+    blocked: "Currently not available",
+  },
+};
+
+let openBundle = null;
+
+function renderBundleInstances() {
+  const select = $("bundle-instance");
+  select.innerHTML = "";
+  instances.forEach((inst) => {
+    const opt = document.createElement("option");
+    opt.value = inst.id;
+    opt.textContent = `${inst.name} — ${inst.mc_version} (${inst.loader})`;
+    select.appendChild(opt);
+  });
+}
+
+async function openBundleModal(id) {
+  const bundle = BUNDLES[id];
+  if (!bundle) return;
+  openBundle = id;
+
+  $("bundle-title").textContent = bundle.title;
+  $("bundle-text").textContent = bundle.text;
+  $("bundle-credits").textContent = bundle.credits;
+
+  const warning = $("bundle-warning");
+  warning.textContent = bundle.warning || "";
+  warning.classList.toggle("hidden", !bundle.warning);
+
+  const status = $("bundle-status");
+  status.textContent = bundle.blocked || "";
+  status.className = "status-line" + (bundle.blocked ? " warn" : "");
+
+  // Beim gesperrten Paket gibt es nichts zu waehlen und nichts zu druecken.
+  const locked = Boolean(bundle.blocked);
+  $("bundle-instance-field").classList.toggle("hidden", locked);
+  $("btn-bundle-install").disabled = locked;
+
+  renderBundleInstances();
+
+  // Der Inhalt kommt aus dem Rust-Teil, damit die Liste im Fenster und die
+  // Liste, die installiert wird, nicht auseinanderlaufen koennen.
+  const list = $("bundle-list");
+  list.innerHTML = "";
+  try {
+    const names = await invoke("bundle_contents", { bundle: id });
+    names.forEach((name) => {
+      const li = document.createElement("li");
+      li.textContent = name;
+      list.appendChild(li);
+    });
+  } catch (e) {
+    const li = document.createElement("li");
+    li.textContent = String(e);
+    list.appendChild(li);
+  }
+
+  $("bundle-backdrop").classList.remove("hidden");
+}
+
+function closeBundleModal() {
+  $("bundle-backdrop").classList.add("hidden");
+  openBundle = null;
+}
+
+async function runBundleInstall() {
+  if (!openBundle) return;
+  const instanceId = $("bundle-instance").value;
+  if (!instanceId) {
+    setStatus("bundle-status", "Keine Instanz ausgewählt.", "warn");
+    return;
+  }
+
+  const button = $("btn-bundle-install");
+  button.disabled = true;
+  setStatus("bundle-status", "Installiere …");
+
+  try {
+    const report = await invoke("install_bundle", {
+      instanceId,
+      bundle: openBundle,
+    });
+
+    // Jede Zeile bekommt ihr Ergebnis, statt einer Zahl am Ende. Bei einem
+    // Paket aus mehreren Sachen ist "3 von 4" die unbrauchbarste aller
+    // Antworten - man will wissen, welches die vierte war.
+    const list = $("bundle-list");
+    list.innerHTML = "";
+    report.items.forEach((item) => {
+      const li = document.createElement("li");
+      li.className = "bundle-" + item.outcome;
+      li.textContent =
+        item.name +
+        (item.outcome === "installed"
+          ? ""
+          : " — " + (item.detail || item.outcome));
+      list.appendChild(li);
+    });
+
+    const failed = report.items.length - report.installed;
+    setStatus(
+      "bundle-status",
+      failed === 0
+        ? "Fertig. Alles installiert."
+        : `${report.installed} von ${report.items.length} installiert.`,
+      failed === 0 ? "done" : "warn"
+    );
+  } catch (e) {
+    setStatus("bundle-status", String(e), "danger");
+  } finally {
+    button.disabled = Boolean(BUNDLES[openBundle]?.blocked);
+  }
+}
+
+document.querySelectorAll(".nav-extra").forEach((button) => {
+  button.addEventListener("click", () => openBundleModal(button.dataset.bundle));
+});
+$("btn-bundle-cancel").addEventListener("click", closeBundleModal);
+$("btn-bundle-install").addEventListener("click", runBundleInstall);
+$("bundle-backdrop").addEventListener("click", (event) => {
+  if (event.target === $("bundle-backdrop")) closeBundleModal();
+});
