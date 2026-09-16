@@ -97,7 +97,7 @@ fn manifest_path(inst: &instance::Instance) -> PathBuf {
     inst.dir().join("modrinth.json")
 }
 
-fn load_manifest(inst: &instance::Instance) -> Vec<InstalledMod> {
+pub(crate) fn load_manifest(inst: &instance::Instance) -> Vec<InstalledMod> {
     std::fs::read_to_string(manifest_path(inst))
         .ok()
         .and_then(|d| serde_json::from_str(&d).ok())
@@ -110,7 +110,7 @@ pub fn write_manifest(inst: &instance::Instance, mods: &[InstalledMod]) -> anyho
     save_manifest(inst, mods)
 }
 
-fn save_manifest(inst: &instance::Instance, mods: &[InstalledMod]) -> anyhow::Result<()> {
+pub(crate) fn save_manifest(inst: &instance::Instance, mods: &[InstalledMod]) -> anyhow::Result<()> {
     std::fs::write(manifest_path(inst), serde_json::to_string_pretty(mods)?)?;
     Ok(())
 }

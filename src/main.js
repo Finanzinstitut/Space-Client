@@ -93,6 +93,8 @@ function showView(name) {
     v.classList.toggle("active", v.id === "view-" + name)
   );
 
+  moveNavMark();
+
   // Read fresh on every opening rather than once at startup: the server list
   // belongs to the game, so it changes while the launcher is running.
   if (name === "servers") loadServerProfiles();
@@ -105,6 +107,32 @@ function showView(name) {
   // The view animates itself in; its contents follow one after another
   stagger(target.querySelectorAll(".instance-card, .mod-card, .account-row"));
 }
+
+/*
+ * Slides the sidebar's marker to whichever entry is now selected.
+ *
+ * One bar that travels, rather than a bar per entry that fades in as another
+ * fades out. The difference is not decoration: two lights crossing reads as two
+ * things, one bar moving reads as the one indicator it actually is - and it
+ * shows you where you came from on the way.
+ *
+ * The position is measured rather than counted, so the marker cannot drift out
+ * of step with the rail when a group heading is added or an entry is hidden.
+ */
+function moveNavMark() {
+  const nav = document.querySelector(".sidebar nav");
+  const active = nav?.querySelector(".nav-item.active");
+  if (!nav || !active) return;
+
+  const top = active.offsetTop + (active.offsetHeight - 16) / 2;
+  nav.style.setProperty("--nav-mark", top + "px");
+  nav.style.setProperty("--nav-mark-shown", "1");
+}
+
+// The rail is laid out by the time this runs, but fonts are not necessarily
+// loaded, and a heading that grows by a pixel moves every entry under it.
+moveNavMark();
+window.addEventListener("load", moveNavMark);
 
 /*
  * Makes a set of elements arrive in turn.
@@ -198,7 +226,7 @@ function renderInstances() {
 
     const editBtn = document.createElement("button");
     editBtn.className = "btn icon-btn small";
-    editBtn.textContent = "✏️";
+    editBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M12.5 5.6 4 14.1V19h4.9l8.5-8.5"/><path d="M15.1 3 21 8.9"/></svg>';
     editBtn.title = t("btn_edit");
     editBtn.onclick = () => openEditModal(inst);
 
@@ -208,20 +236,32 @@ function renderInstances() {
     playBtn.onclick = () => launchInstance(inst);
     actions.appendChild(playBtn);
 
-    // Only where there is something to install. The check was already being
-    // worked out above and then not used, so every instance offered to install
-    // itself again - including the one you had just played.
+    // Two different wishes, and the last version collapsed them into one: the
+    // button was hidden for anything already installed, which is exactly the
+    // case where somebody wants the newest companion mod. An instance that was
+    // never built gets Install; a built one gets the mod on its own, without
+    // the version, libraries and loader a reinstall would fetch again.
+    const canHaveMod =
+      inst.install_client_mod !== false &&
+      (inst.loader === "fabric" || inst.loader === "quilt");
     if (!installed) {
       const installBtn = document.createElement("button");
       installBtn.className = "btn secondary small";
       installBtn.textContent = t("btn_install");
       installBtn.onclick = () => installInstance(inst);
       actions.appendChild(installBtn);
+    } else if (canHaveMod) {
+      const modBtn = document.createElement("button");
+      modBtn.className = "btn secondary small";
+      modBtn.textContent = t("btn_update_mod");
+      modBtn.title = t("update_mod_hint");
+      modBtn.onclick = () => updateClientMod(inst);
+      actions.appendChild(modBtn);
     }
 
     const folderBtn = document.createElement("button");
     folderBtn.className = "btn icon-btn small";
-    folderBtn.textContent = "📁";
+    folderBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M3.2 6.6a1.8 1.8 0 0 1 1.8-1.8h3.6l2 2.4h7.6a1.8 1.8 0 0 1 1.8 1.8v8.4a1.8 1.8 0 0 1-1.8 1.8H5a1.8 1.8 0 0 1-1.8-1.8z"/></svg>';
     folderBtn.title = t("btn_open_folder");
     folderBtn.onclick = async () => {
       try {
@@ -277,6 +317,32 @@ async function installInstance(inst) {
     await refreshInstances();
   } catch (e) {
     setStatus("global-status", String(e), "error");
+  }
+}
+
+/** Fetches the newest Space Client mod into one instance.
+ *
+ *  Separate from installInstance because they cost wildly different things:
+ *  this is one jar, that is the whole instance. The progress strip is closed
+ *  here rather than left to the "done" stage, which only the version download
+ *  ever emits.
+ */
+async function updateClientMod(inst) {
+  setStatus("global-status", t("mod_updating", { name: inst.name }));
+  $("progress-wrap").classList.remove("hidden");
+  try {
+    const tag = await invoke("update_client_mod", { id: inst.id });
+    if (tag) {
+      setStatus("global-status", t("mod_updated", { version: tag }), "success");
+    } else {
+      // The release carried no jar that fits this instance. The progress line
+      // already said which, so this stays short rather than guessing again.
+      setStatus("global-status", t("mod_update_none"));
+    }
+  } catch (e) {
+    setStatus("global-status", String(e), "error");
+  } finally {
+    $("progress-wrap").classList.add("hidden");
   }
 }
 
@@ -1537,9 +1603,13 @@ function renderCategoryChips() {
   });
 }
 
-document.querySelectorAll(".type-btn").forEach((btn) => {
+// Scoped to its own row. The source buttons above carry their own class now,
+// but an unscoped ".type-btn" is what let a click on CurseForge run this
+// handler and set currentType to undefined - the search then went out without
+// a project type at all.
+document.querySelectorAll("#type-row .type-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".type-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll("#type-row .type-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
     currentType = btn.dataset.type;
     selectedCategories = [];
@@ -1597,13 +1667,24 @@ async function searchMods() {
   setStatus("mods-status", "");
 
   try {
-    const hits = await invoke("search_mods", {
-      query,
-      instanceId: inst.id,
-      projectType: currentType,
-      categories: selectedCategories,
-      offset: 0,
-    });
+    // CurseForge does not answer without a key and has no category facets, so
+    // the two sources take different arguments rather than a shared shape that
+    // would have to carry fields one of them ignores.
+    const hits = modSource === "curseforge"
+      ? await invoke("search_curseforge", {
+          query,
+          mcVersion: inst.mc_version,
+          loader: inst.loader,
+          projectType: currentType,
+          offset: 0,
+        })
+      : await invoke("search_mods", {
+          query,
+          instanceId: inst.id,
+          projectType: currentType,
+          categories: selectedCategories,
+          offset: 0,
+        });
 
     list.innerHTML = "";
     if (hits.length === 0) {
@@ -1666,11 +1747,17 @@ async function openVersionPicker(hit) {
   $("version-backdrop").classList.remove("hidden");
 
   try {
-    const versions = await invoke("list_project_versions", {
-      projectId: hit.project_id,
-      instanceId: inst.id,
-      projectType: currentType,
-    });
+    const versions = modSource === "curseforge"
+      ? await invoke("list_curseforge_files", {
+          projectId: hit.project_id,
+          mcVersion: inst.mc_version,
+          loader: inst.loader,
+        })
+      : await invoke("list_project_versions", {
+          projectId: hit.project_id,
+          instanceId: inst.id,
+          projectType: currentType,
+        });
 
     const list = $("version-list");
     list.innerHTML = "";
@@ -1717,12 +1804,23 @@ async function openVersionPicker(hit) {
         btn.disabled = true;
         setStatus("mods-status", t("mods_installing", { name: hit.title }));
         try {
-          await invoke("install_project_version", {
-            instanceId: inst.id,
-            projectId: hit.project_id,
-            versionId: v.id,
-            projectType: currentType,
-          });
+          if (modSource === "curseforge") {
+            await invoke("install_curseforge_file", {
+              instanceId: inst.id,
+              projectId: hit.project_id,
+              fileId: v.id,
+              projectType: currentType,
+              title: hit.title,
+              iconUrl: hit.icon_url || "",
+            });
+          } else {
+            await invoke("install_project_version", {
+              instanceId: inst.id,
+              projectId: hit.project_id,
+              versionId: v.id,
+              projectType: currentType,
+            });
+          }
           $("version-backdrop").classList.add("hidden");
           setStatus("mods-status", t("mods_installed_msg", { count: 1 }), "success");
           await loadInstalledMods();
@@ -2050,11 +2148,14 @@ $("btn-save-settings").addEventListener("click", async () => {
       homeMotion: $("home-motion").checked,
       skinAnimations: $("skin-animations").checked,
       backupOnLaunch: $("backup-on-launch").checked,
+      curseforgeKey: $("curseforge-key").value,
+      autoUpdateClientMod: $("auto-update-mod").checked,
       backupKeep: parseInt($("backup-keep").value, 10) || 5,
     });
     setLanguage(config.language);
     applyTranslations();
     applyMotionPrefs();
+    refreshCurseforgeReady();
     renderInstances();
     renderAccount();
     renderModsInstanceOptions();
@@ -2158,6 +2259,8 @@ async function init() {
   $("home-motion").checked = config.home_motion !== false;
   $("skin-animations").checked = config.skin_animations !== false;
   $("backup-on-launch").checked = config.backup_on_launch === true;
+  $("auto-update-mod").checked = config.auto_update_client_mod !== false;
+  $("curseforge-key").value = config.curseforge_key || "";
   $("backup-keep").value = config.backup_keep || 5;
   applyMotionPrefs();
 
@@ -2616,7 +2719,6 @@ function renderHomeDetail() {
   const active = homeProfileNote(inst.id);
   if (active) line = line ? `${line} · ${active}` : active;
   note.textContent = line;
-  renderModCheck();
 
   // Mark the matching row below, so the two halves of the screen agree
   document.querySelectorAll(".instance-card").forEach((card) => {
@@ -2838,62 +2940,62 @@ $("btn-backup-all").addEventListener("click", async () => {
   }
 });
 
+
 /* ---------------------------------------------------------------------------
- * Mod compatibility, shown on the home screen
+ * Where mods come from
+ *
+ * Two sources behind one browser. Modrinth needs nothing and is the default;
+ * CurseForge needs a key, which is why the row says so instead of returning an
+ * empty list and leaving somebody to guess.
  * ------------------------------------------------------------------------ */
 
-/** The three shapes of problem, written in the launcher's own language. */
-function modIssueText(issue) {
-  if (issue.kind === "minecraft") {
-    return t("modcheck_mc", { wanted: issue.wanted, have: issue.have });
-  }
-  if (issue.kind === "loader") {
-    return t("modcheck_loader", { wanted: issue.wanted, have: issue.have });
-  }
-  return t("modcheck_unreadable");
-}
+let modSource = "modrinth";
 
-async function renderModCheck() {
-  const box = $("modcheck");
-  const inst = homeSelectedInstance();
-  if (!box) return;
-
-  if (!inst) {
-    box.classList.add("hidden");
-    return;
-  }
-  let result;
-  try {
-    result = await invoke("check_instance_mods", { instanceId: inst.id });
-  } catch {
-    box.classList.add("hidden");
-    return;
-  }
-
-  // Silence means "checked, nothing wrong" here, which is the one case worth
-  // saying nothing about. A note means it could not check at all, and that is
-  // also not worth a warning box on the main screen.
-  if (!result || result.issues.length === 0) {
-    box.classList.add("hidden");
-    return;
-  }
-
-  box.innerHTML = "";
-  const head = document.createElement("div");
-  head.textContent = t("modcheck_title", { count: result.issues.length });
-  box.appendChild(head);
-
-  result.issues.slice(0, 4).forEach((issue) => {
-    const line = document.createElement("div");
-    line.className = "hint";
-    line.textContent = `${issue.name} — ${modIssueText(issue)}`;
-    box.appendChild(line);
+function applyModSource() {
+  document.querySelectorAll("#source-row .source-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.source === modSource);
   });
-  if (result.issues.length > 4) {
-    const more = document.createElement("div");
-    more.className = "hint";
-    more.textContent = t("modcheck_more", { count: result.issues.length - 4 });
-    box.appendChild(more);
+
+  // Categories are Modrinth's own facets; CurseForge sorts by its own tree and
+  // the chips would filter nothing.
+  const chips = $("category-chips");
+  const label = document.querySelector(".cat-label");
+  if (chips) chips.classList.toggle("hidden", modSource === "curseforge");
+  if (label) label.classList.toggle("hidden", modSource === "curseforge");
+
+  const note = $("source-note");
+  if (note) {
+    // Asked of the backend rather than read off the local setting: most
+    // installs carry a key from the build and have nothing in Settings, and
+    // those must not be told to go and find one.
+    const needsKey = modSource === "curseforge" && curseforgeReady === false;
+    note.textContent = needsKey ? t("cf_needs_key") : "";
+    note.classList.toggle("hidden", !needsKey);
   }
-  box.classList.remove("hidden");
 }
+
+/** null until asked; the note stays quiet in the meantime. */
+let curseforgeReady = null;
+
+async function refreshCurseforgeReady() {
+  try {
+    curseforgeReady = await invoke("curseforge_ready");
+  } catch {
+    curseforgeReady = false;
+  }
+  applyModSource();
+}
+
+document.querySelectorAll("#source-row .source-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (modSource === btn.dataset.source) return;
+    modSource = btn.dataset.source;
+    selectedCategories = [];
+    applyModSource();
+    searchMods();
+  });
+});
+
+applyModSource();
+
+refreshCurseforgeReady();

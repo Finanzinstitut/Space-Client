@@ -64,6 +64,8 @@ async fn set_settings(
     skin_animations: bool,
     backup_on_launch: bool,
     backup_keep: u32,
+    auto_update_client_mod: bool,
+    curseforge_key: String,
     state: State<'_, AppState>,
 ) -> Result<LauncherConfig, String> {
     let mut cfg = state.config.lock().unwrap();
@@ -76,6 +78,8 @@ async fn set_settings(
     cfg.skin_animations = skin_animations;
     cfg.backup_on_launch = backup_on_launch;
     cfg.backup_keep = backup_keep.clamp(1, 50);
+    cfg.auto_update_client_mod = auto_update_client_mod;
+    cfg.curseforge_key = curseforge_key.trim().to_string();
     cfg.save().map_err(|e| e.to_string())?;
     Ok(cfg.clone())
 }
@@ -505,6 +509,45 @@ async fn install_instance(
     Ok(inst)
 }
 
+/// Fetches the newest companion mod into one instance, without the version,
+/// libraries and loader that a full reinstall drags along.
+///
+/// This is what the button on the instance card does. It exists separately
+/// because "get me the newest mod" and "build this instance again" are two
+/// different wishes, and only one of them should cost a few hundred megabytes.
+#[tauri::command]
+async fn update_client_mod(
+    app: tauri::AppHandle,
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let inst = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
+
+    // Replacing a jar under a running game does not take effect and can fail
+    // outright on Windows, where the file is held open.
+    if state.running.lock().unwrap().contains_key(&id) {
+        return Err("Close the game first - the mod cannot be replaced while it is running.".into());
+    }
+    if !inst.install_client_mod {
+        return Err("The Space Client mod is switched off for this instance.".into());
+    }
+    if !launcher::clientmod::supports_loader(&inst.loader) {
+        return Err(format!(
+            "The Space Client mod needs Fabric or Quilt, and this instance is {}.",
+            inst.loader
+        ));
+    }
+
+    match launcher::clientmod::install_client_mod(&app, &inst).await {
+        Ok(Some(tag)) => Ok(tag),
+        // A release that carries no jar, or one built for another Minecraft
+        // version. install_client_mod has already said which through the
+        // progress channel; the caller gets an empty tag and leaves it at that.
+        Ok(None) => Ok(String::new()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 #[tauri::command]
 async fn launch_instance(
     app: tauri::AppHandle,
@@ -518,6 +561,24 @@ async fn launch_instance(
 
     let cfg = state.config.lock().unwrap().clone();
     let inst = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
+
+    // The newest companion mod, before Java starts - which is the only moment
+    // it can be for the same reason the profile below is applied here: Fabric
+    // reads the mods folder once, at startup.
+    //
+    // Nothing in here is fatal. Being offline, a rate limit, or a release that
+    // does not fit this Minecraft version are all reasons to play with the jar
+    // that is already in the folder, not reasons to refuse to start the game.
+    if cfg.auto_update_client_mod
+        && inst.install_client_mod
+        && launcher::clientmod::supports_loader(&inst.loader)
+    {
+        match launcher::clientmod::install_client_mod(&app, &inst).await {
+            Ok(Some(tag)) => eprintln!("Space Client mod: {tag}"),
+            Ok(None) => {}
+            Err(e) => eprintln!("Space Client mod not refreshed - {e}"),
+        }
+    }
 
     // The mods folder is put into the chosen server's shape before Java
     // starts, because that is the only moment it can be: Fabric reads the
@@ -809,12 +870,72 @@ async fn apply_server_profile(
 }
 
 // ---------------------------------------------------------------------------
-// mod compatibility and world backups
+// world backups
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// CurseForge, the second source
+// ---------------------------------------------------------------------------
+
+/// Whether the CurseForge source can be used here - a key from the build, or
+/// one typed into Settings. The browser asks before it offers the source.
 #[tauri::command]
-fn check_instance_mods(instance_id: String) -> Result<launcher::modcheck::ModCheck, String> {
-    Ok(launcher::modcheck::check(&instance_id))
+fn curseforge_ready(state: State<'_, AppState>) -> Result<bool, String> {
+    Ok(launcher::curseforge::have_key(
+        &state.config.lock().unwrap().curseforge_key,
+    ))
+}
+
+#[tauri::command]
+async fn search_curseforge(
+    query: String,
+    mc_version: String,
+    loader: String,
+    project_type: String,
+    offset: u32,
+    state: State<'_, AppState>,
+) -> Result<Vec<launcher::mods::ModHit>, String> {
+    let key = launcher::curseforge::effective_key(
+        &state.config.lock().unwrap().curseforge_key,
+    );
+    launcher::curseforge::search(&key, query, mc_version, loader, project_type, offset)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn list_curseforge_files(
+    project_id: String,
+    mc_version: String,
+    loader: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<launcher::mods::ProjectVersion>, String> {
+    let key = launcher::curseforge::effective_key(
+        &state.config.lock().unwrap().curseforge_key,
+    );
+    launcher::curseforge::list_versions(&key, project_id, mc_version, loader)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn install_curseforge_file(
+    instance_id: String,
+    project_id: String,
+    file_id: String,
+    project_type: String,
+    title: String,
+    icon_url: String,
+    state: State<'_, AppState>,
+) -> Result<launcher::mods::InstalledMod, String> {
+    let key = launcher::curseforge::effective_key(
+        &state.config.lock().unwrap().curseforge_key,
+    );
+    launcher::curseforge::install(
+        &key, instance_id, project_id, file_id, project_type, title, icon_url,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -927,6 +1048,7 @@ fn main() {
             delete_instance,
             open_instance_folder,
             install_instance,
+            update_client_mod,
             launch_instance,
             kill_instance,
             is_running,
@@ -948,13 +1070,16 @@ fn main() {
             get_server_profiles,
             save_server_profiles,
             apply_server_profile,
-            check_instance_mods,
             list_worlds,
             list_backups,
             backup_world,
             restore_backup,
             delete_backup,
             enable_all_mods,
+            curseforge_ready,
+            search_curseforge,
+            list_curseforge_files,
+            install_curseforge_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Space Client");
