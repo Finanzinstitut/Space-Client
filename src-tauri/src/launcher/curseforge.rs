@@ -355,6 +355,60 @@ async fn files(
         .collect())
 }
 
+/// Die Zahl hinter einem Kuerzel.
+///
+/// In einer CurseForge-Adresse steht ein Kuerzel - no-soundcap -, die
+/// Schnittstelle will aber ueberall die Projektnummer. Wer eine feste Liste
+/// von Kuerzeln pflegt, wie bundles.rs, kann die Nummer nicht kennen: sie
+/// steht auf der Projektseite und nirgends sonst.
+///
+/// Die Suche kann nach Kuerzel gefragt werden und antwortet mit genau einem
+/// Treffer. Das ist eine Anfrage mehr je Installation und dafuer eine Liste,
+/// die man lesen kann, statt einer Reihe von Zahlen, die niemand nachprueft.
+pub async fn id_for_slug(key: &str, slug: &str) -> anyhow::Result<String> {
+    // Eine Zahl ist schon die Antwort. Erspart die Anfrage und laesst zu, dass
+    // jemand die Nummer direkt hinschreibt, wenn er sie hat.
+    if slug.chars().all(|c| c.is_ascii_digit()) {
+        return Ok(slug.to_string());
+    }
+
+    let response = http(key)?
+        .get(format!("{}/mods/search", API))
+        .query(&[
+            ("gameId", GAME_MINECRAFT.to_string()),
+            ("slug", slug.to_string()),
+            ("pageSize", "5".to_string()),
+        ])
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        anyhow::bail!("CurseForge answered {}", response.status());
+    }
+
+    #[derive(serde::Deserialize)]
+    struct Hit {
+        id: u64,
+        slug: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Wrapper {
+        data: Vec<Hit>,
+    }
+
+    let parsed: Wrapper = response.json().await?;
+
+    // Auf das Kuerzel geprueft, nicht einfach der erste Treffer. Die Suche
+    // darf mehr zurueckgeben als das, wonach gefragt wurde, und dann waere
+    // still ein anderes Projekt installiert worden.
+    parsed
+        .data
+        .into_iter()
+        .find(|hit| hit.slug == slug)
+        .map(|hit| hit.id.to_string())
+        .ok_or_else(|| anyhow::anyhow!("No CurseForge project called {}", slug))
+}
+
 pub async fn list_versions(
     key: &str,
     project_id: String,
