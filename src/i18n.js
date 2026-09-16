@@ -276,6 +276,12 @@ export const translations = {
     console_autoscroll: "Auto-scroll",
 
     settings_title: "Settings",
+    settings_sub: "How the launcher behaves, and where it keeps things.",
+    group_storage: "Storage and Java",
+    group_client: "Client",
+    group_motion: "Motion",
+    group_backup: "World backups",
+    ram_hint: "How much memory a newly created instance gets. Each instance can be changed on its own afterwards.",
     field_install_path: "Shared data folder",
     install_path_hint:
       "Versions, libraries, assets and Java runtimes are cached here and shared by all instances. Instance folders are chosen separately.",
@@ -585,6 +591,12 @@ export const translations = {
     console_autoscroll: "Auto-Scroll",
 
     settings_title: "Einstellungen",
+    settings_sub: "Wie der Launcher sich verhält und wo er Dinge ablegt.",
+    group_storage: "Speicher und Java",
+    group_client: "Client",
+    group_motion: "Bewegung",
+    group_backup: "Welt-Sicherungen",
+    ram_hint: "Wie viel Speicher eine neu angelegte Instanz bekommt. Jede Instanz lässt sich danach einzeln ändern.",
     field_install_path: "Gemeinsamer Datenordner",
     install_path_hint:
       "Versionen, Bibliotheken, Assets und Java-Runtimes werden hier zwischengespeichert und von allen Instanzen geteilt. Instanz-Ordner wählst du separat.",

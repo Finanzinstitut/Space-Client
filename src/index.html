@@ -421,92 +421,160 @@
       <!-- SETTINGS -->
       <section id="view-settings" class="view">
         <h1 data-i18n="settings_title"></h1>
-        <div class="card">
-          <div class="field grow">
-            <label data-i18n="field_install_path"></label>
-            <div class="row">
+        <p class="subtitle" data-i18n="settings_sub"></p>
+
+        <!--
+          Zeilen statt Formularfeldern, wie im Spielmenue.
+
+          Vorher stand ueber jedem Feld eine Grossbuchstaben-Ueberschrift und
+          darunter ein Hinweis in Grau - drei Zeilen Platz fuer eine
+          Entscheidung, und der Hinweis sass so weit weg vom Schalter, dass er
+          zu einer eigenen Sache wurde. Jetzt traegt jede Zeile ihren Namen,
+          ihre Erklaerung und ihr Bedienelement nebeneinander, und die Gruppen
+          sagen, worum es geht.
+        -->
+
+        <div class="set-group">
+          <div class="set-head" data-i18n="group_storage"></div>
+
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_install_path"></div>
+              <div class="set-desc" data-i18n="install_path_hint"></div>
+            </div>
+            <div class="set-control wide">
               <input id="install-path" type="text" readonly />
               <button id="btn-pick-path" class="btn secondary small" data-i18n="btn_choose"></button>
             </div>
-            <p class="hint" data-i18n="install_path_hint"></p>
           </div>
 
-          <div class="field grow">
-            <label data-i18n="field_java"></label>
-            <input id="java-path" type="text" data-i18n-ph="java_ph" />
-            <p class="hint" data-i18n="java_hint"></p>
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_java"></div>
+              <div class="set-desc" data-i18n="java_hint"></div>
+            </div>
+            <div class="set-control wide">
+              <input id="java-path" type="text" data-i18n-ph="java_ph" />
+            </div>
           </div>
 
-          <div class="field grow">
-            <label data-i18n="field_default_ram"></label>
-            <input id="ram-slider" type="range" min="1024" max="16384" step="512" />
-            <span id="ram-value"></span>
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_default_ram"></div>
+              <div class="set-desc" data-i18n="ram_hint"></div>
+            </div>
+            <div class="set-control">
+              <input id="ram-slider" type="range" min="1024" max="16384" step="512" />
+              <span id="ram-value" class="set-value"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="set-group">
+          <div class="set-head" data-i18n="group_client"></div>
+
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_language"></div>
+            </div>
+            <div class="set-control">
+              <select id="language-select">
+                <option value="en">English</option>
+                <option value="de">Deutsch</option>
+              </select>
+            </div>
           </div>
 
-          <div class="field grow">
-            <label data-i18n="field_language"></label>
-            <select id="language-select">
-              <option value="en">English</option>
-              <option value="de">Deutsch</option>
-            </select>
-          </div>
-
-          <div class="field grow">
-            <label class="checkbox">
-              <input type="checkbox" id="check-updates" />
-              <span data-i18n="field_updates"></span>
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_updates"></div>
+              <div class="set-desc" id="update-status"></div>
+            </div>
+            <label class="set-control">
+              <input type="checkbox" id="check-updates" class="switch" />
             </label>
-            <div id="update-status" class="status-line"></div>
           </div>
 
-          <div class="field grow">
-            <label class="checkbox">
-              <input type="checkbox" id="live-logs" />
-              <span data-i18n="field_live_logs"></span>
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_live_logs"></div>
+              <div class="set-desc" data-i18n="live_logs_hint"></div>
+            </div>
+            <label class="set-control">
+              <input type="checkbox" id="live-logs" class="switch" />
             </label>
-            <p class="hint" data-i18n="live_logs_hint"></p>
           </div>
 
-          <div class="field grow">
-            <label class="checkbox">
-              <input type="checkbox" id="home-motion" />
-              <span data-i18n="field_home_motion"></span>
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_auto_update_mod"></div>
+              <div class="set-desc" data-i18n="auto_update_mod_hint"></div>
+            </div>
+            <label class="set-control">
+              <input type="checkbox" id="auto-update-mod" class="switch" />
             </label>
-            <label class="checkbox">
-              <input type="checkbox" id="skin-animations" />
-              <span data-i18n="field_skin_animations"></span>
+          </div>
+
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_cf_key"></div>
+              <div class="set-desc" data-i18n="cf_key_hint"></div>
+            </div>
+            <div class="set-control wide">
+              <input id="curseforge-key" type="password" autocomplete="off" spellcheck="false" />
+            </div>
+          </div>
+        </div>
+
+        <div class="set-group">
+          <div class="set-head" data-i18n="group_motion"></div>
+
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_home_motion"></div>
+              <div class="set-desc" data-i18n="motion_hint"></div>
+            </div>
+            <label class="set-control">
+              <input type="checkbox" id="home-motion" class="switch" />
             </label>
-            <p class="hint" data-i18n="motion_hint"></p>
           </div>
 
-          <div class="field grow">
-            <label class="checkbox">
-              <input type="checkbox" id="auto-update-mod" />
-              <span data-i18n="field_auto_update_mod"></span>
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_skin_animations"></div>
+            </div>
+            <label class="set-control">
+              <input type="checkbox" id="skin-animations" class="switch" />
             </label>
-            <p class="hint" data-i18n="auto_update_mod_hint"></p>
           </div>
+        </div>
 
-          <div class="field grow">
-            <label data-i18n="field_cf_key"></label>
-            <input id="curseforge-key" type="password" autocomplete="off" spellcheck="false" />
-            <p class="hint" data-i18n="cf_key_hint"></p>
-          </div>
+        <div class="set-group">
+          <div class="set-head" data-i18n="group_backup"></div>
 
-          <div class="field grow">
-            <label class="checkbox">
-              <input type="checkbox" id="backup-on-launch" />
-              <span data-i18n="field_backup_launch"></span>
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_backup_launch"></div>
+              <div class="set-desc" data-i18n="backup_hint"></div>
+            </div>
+            <label class="set-control">
+              <input type="checkbox" id="backup-on-launch" class="switch" />
             </label>
-            <label data-i18n="field_backup_keep"></label>
-            <input id="backup-keep" type="number" min="1" max="50" />
-            <p class="hint" data-i18n="backup_hint"></p>
           </div>
 
-          <div class="row actions">
-            <button id="btn-save-settings" class="btn primary" data-i18n="btn_save"></button>
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_backup_keep"></div>
+            </div>
+            <div class="set-control">
+              <input id="backup-keep" type="number" min="1" max="50" />
+            </div>
           </div>
+        </div>
+
+        <div class="set-bar">
           <div id="settings-status" class="status-line"></div>
+          <button id="btn-save-settings" class="btn primary" data-i18n="btn_save"></button>
         </div>
       </section>
     </main>
