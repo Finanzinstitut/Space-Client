@@ -319,9 +319,21 @@ h2 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
   min-height: 16px;
   margin-top: 10px;
 }
+/*
+ * Alle Namen, die das Skript wirklich durchreicht, nicht die, die ich beim
+ * Neuschreiben dieses Blattes fuer wahrscheinlich hielt.
+ *
+ * Es waren drei Regeln, und das Skript sagt an 71 von 74 Stellen "error" oder
+ * "success" - beides ohne Regel. Also war eine fehlgeschlagene Anmeldung grau
+ * und ein gegluecktes Speichern auch, und der Unterschied zwischen beiden war
+ * der Wortlaut. Gezaehlt, nicht geschaetzt: grep ueber main.js.
+ */
 .status-line.warn { color: var(--warn); }
-.status-line.danger { color: var(--danger); }
-.status-line.done { color: var(--success); }
+.status-line.danger,
+.status-line.error { color: var(--danger); }
+.status-line.done,
+.status-line.ok,
+.status-line.success { color: var(--success); }
 
 /* ============================ hero ============================ */
 

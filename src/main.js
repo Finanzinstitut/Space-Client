@@ -154,12 +154,33 @@ function stagger(nodes, step = 35) {
   });
 }
 
+/*
+ * Die Klassen, die ein Statusfeld schon hatte, bevor hier zum ersten Mal etwas
+ * hineingeschrieben wurde.
+ *
+ * className zu ueberschreiben ist der einfache Weg und war der falsche: in den
+ * neuen Einstellungen ist die Update-Zeile zugleich die Beschreibung ihrer
+ * Zeile, und die erste Meldung hat ihr genau diese Rolle weggenommen. Gemerkt
+ * statt geraten, damit ein Feld seine Herkunft behaelt, ohne dass irgendwo
+ * eine Liste gepflegt werden muss.
+ */
+const statusBase = new WeakMap();
+
 function setStatus(el, msg, kind = "") {
   const node = $(el);
   const changed = node.textContent !== msg;
 
+  if (!statusBase.has(node)) {
+    statusBase.set(
+      node,
+      [...node.classList].filter((c) => c !== "status-line" && c !== "changed")
+    );
+  }
+
   node.textContent = msg;
-  node.className = "status-line " + kind;
+  node.className = [...statusBase.get(node), "status-line", kind]
+    .filter(Boolean)
+    .join(" ");
 
   // Only when it actually says something new. Replaying the flash on every
   // repaint would make a line that updates twice a second impossible to read.
