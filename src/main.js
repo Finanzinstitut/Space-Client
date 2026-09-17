@@ -3087,35 +3087,60 @@ async function openBundleModal(id) {
   warning.textContent = bundle.warning || "";
   warning.classList.toggle("hidden", !bundle.warning);
 
-  const status = $("bundle-status");
-  status.textContent = bundle.blocked || "";
-  status.className = "status-line" + (bundle.blocked ? " warn" : "");
-
-  // Beim gesperrten Paket gibt es nichts zu waehlen und nichts zu druecken.
-  const locked = Boolean(bundle.blocked);
-  $("bundle-instance-field").classList.toggle("hidden", locked);
-  $("btn-bundle-install").disabled = locked;
-
   renderBundleInstances();
+  await refreshBundleFit();
 
-  // Der Inhalt kommt aus dem Rust-Teil, damit die Liste im Fenster und die
-  // Liste, die installiert wird, nicht auseinanderlaufen koennen.
+  $("bundle-backdrop").classList.remove("hidden");
+}
+
+/*
+ * Passt das Paket in die Instanz, die oben gewaehlt ist?
+ *
+ * Die Antwort kommt aus dem Rust-Teil und nicht von hier. Dort steht ohnehin,
+ * woran ein Paket haengt, und zwei Stellen, die dieselbe Regel kennen, sind
+ * eine Stelle zu viel - die eine wird irgendwann geaendert und die andere
+ * nicht.
+ *
+ * Gefragt wird bei jedem Oeffnen und bei jedem Wechsel der Auswahl, denn die
+ * Auswahl ist genau das, was die Antwort aendert.
+ */
+async function refreshBundleFit(renderList = true) {
   const list = $("bundle-list");
-  list.innerHTML = "";
+  const install = $("btn-bundle-install");
+  if (renderList) list.replaceChildren();
+
+  let info = { items: [], blocked: "" };
   try {
-    const names = await invoke("bundle_contents", { bundle: id });
-    names.forEach((name) => {
+    info = await invoke("bundle_info", {
+      bundle: openBundle,
+      instanceId: $("bundle-instance").value || "",
+    });
+  } catch (e) {
+    setStatus("bundle-status", String(e), "error");
+    return;
+  }
+
+  if (renderList) {
+    info.items.forEach((name) => {
       const li = document.createElement("li");
       li.textContent = name;
       list.appendChild(li);
     });
-  } catch (e) {
-    const li = document.createElement("li");
-    li.textContent = String(e);
-    list.appendChild(li);
   }
 
-  $("bundle-backdrop").classList.remove("hidden");
+  const blocked = Boolean(info.blocked);
+  install.disabled = blocked;
+
+  // Die Instanzwahl bleibt sichtbar, wenn die Instanz der Grund ist - sonst
+  // koennte man die Absage lesen und nicht darauf reagieren.
+  const ownBlock = Boolean(BUNDLES[openBundle]?.blocked);
+  $("bundle-instance-field").classList.toggle("hidden", ownBlock);
+
+  // Beim stillen Nachfassen nach einer Installation bleibt eine gute Meldung
+  // stehen; nur eine Absage muss sich durchsetzen.
+  if (blocked || renderList) {
+    setStatus("bundle-status", info.blocked || "", blocked ? "warn" : "");
+  }
 }
 
 function closeBundleModal() {
@@ -3168,12 +3193,18 @@ async function runBundleInstall() {
   } catch (e) {
     setStatus("bundle-status", String(e), "danger");
   } finally {
-    button.disabled = Boolean(BUNDLES[openBundle]?.blocked);
+    // Nur den Knopf neu bewerten. Die Liste traegt jetzt die Ergebnisse, und
+    // die sind das Einzige, was der Klick hinterlassen hat - sie hier neu zu
+    // bauen hiesse, sie sofort wieder wegzuwerfen.
+    await refreshBundleFit(false);
   }
 }
 
 document.querySelectorAll(".nav-extra").forEach((button) => {
   button.addEventListener("click", () => openBundleModal(button.dataset.bundle));
+});
+$("bundle-instance").addEventListener("change", () => {
+  refreshBundleFit();
 });
 $("btn-bundle-cancel").addEventListener("click", closeBundleModal);
 $("btn-bundle-install").addEventListener("click", runBundleInstall);

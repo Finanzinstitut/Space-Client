@@ -108,10 +108,10 @@ async fn download_update() -> Result<String, String> {
     update::download_update().await.map_err(|e| e.to_string())
 }
 
-/// Was in einem Paket steckt, damit das Fenster es aufzaehlen kann.
+/// Was in einem Paket steckt und ob es in die gewaehlte Instanz passt.
 #[tauri::command]
-fn bundle_contents(bundle: String) -> Vec<String> {
-    launcher::bundles::contents(&bundle)
+fn bundle_info(bundle: String, instance_id: String) -> launcher::bundles::BundleInfo {
+    launcher::bundles::info(&bundle, &instance_id)
 }
 
 /// Installiert ein fertiges Paket in eine Instanz.
@@ -1043,7 +1043,7 @@ fn main() {
             set_settings,
             check_update,
             download_update,
-            bundle_contents,
+            bundle_info,
             install_bundle,
             run_installer,
             get_account,
