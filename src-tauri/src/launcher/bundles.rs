@@ -53,6 +53,20 @@ pub struct Bundle {
     pub id: &'static str,
     /// Solange das gesetzt ist, wird nichts installiert und der Text gesagt.
     pub blocked: Option<&'static str>,
+
+    /// Woran das ganze Paket haengt, nicht der einzelne Eintrag.
+    ///
+    /// Die Eintraege pruefen sich ohnehin selbst, und bei falscher Instanz
+    /// kaeme dabei dreimal dieselbe Absage heraus - untereinander, jede mit
+    /// ihrem eigenen Grund, als waeren es drei Probleme. Ist es aber nicht:
+    /// es ist die Instanz. Also wird einmal vorne gefragt und einmal vorne
+    /// geantwortet, und die Oberflaeche kann es schon sagen, bevor jemand auf
+    /// Installieren drueckt.
+    ///
+    /// Leer heisst: keine Einschraenkung.
+    pub requires_mc: &'static [&'static str],
+    pub requires_loader: &'static [&'static str],
+
     items: &'static [Item],
 }
 
@@ -64,6 +78,10 @@ pub const BUNDLES: &[Bundle] = &[
     Bundle {
         id: "umbaria",
         blocked: None,
+        // Ein Ressourcenpaket braucht keinen Loader, und ein falsches Format
+        // meckert das Spiel selbst an, statt abzustuerzen.
+        requires_mc: &[],
+        requires_loader: &[],
         items: &[Item {
             name: "Vanilla PvP v5",
             source: Source::Direct,
@@ -79,6 +97,12 @@ pub const BUNDLES: &[Bundle] = &[
     Bundle {
         id: "finanzinstitut",
         blocked: None,
+        // Alle drei sind Fabric-Mods fuer 26.2. Auf allem anderen gibt es
+        // nichts zu installieren, also wird es gar nicht erst versucht.
+        // "26.2.x" und nicht "26.2": eine 26.2.1 ist immer noch 26.2, und
+        // jemanden dort auszusperren waere ueberraschend.
+        requires_mc: &["26.2.x"],
+        requires_loader: &["fabric"],
         items: &[
             Item {
                 name: "Low Health Warning",
@@ -111,6 +135,8 @@ pub const BUNDLES: &[Bundle] = &[
     Bundle {
         id: "doktorsam",
         blocked: Some("Currently not available"),
+        requires_mc: &[],
+        requires_loader: &[],
         items: &[
             Item {
                 name: "Mace PvP Perfected",
@@ -162,12 +188,86 @@ fn find(id: &str) -> Option<&'static Bundle> {
     BUNDLES.iter().find(|b| b.id == id)
 }
 
-/// Was in einem Paket steckt, damit das Fenster es aufzaehlen kann, bevor
-/// jemand zusagt.
-pub fn contents(id: &str) -> Vec<String> {
-    find(id)
-        .map(|b| b.items.iter().map(|i| i.name.to_string()).collect())
-        .unwrap_or_default()
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct BundleInfo {
+    pub items: Vec<String>,
+    /// Warum es hier nicht geht, oder leer. Vom Fenster gelesen, bevor
+    /// jemand zusagt - eine Absage, die erst nach dem Klick kommt, ist eine
+    /// Absage, die man sich haette sparen koennen.
+    pub blocked: String,
+}
+
+/// Was in einem Paket steckt und ob es in diese Instanz passt.
+///
+/// Die Instanz wird mitgegeben, weil die Antwort von ihr abhaengt: dasselbe
+/// Paket geht in die eine und nicht in die andere, und das Fenster hat oben
+/// eine Auswahl, die sich waehrenddessen aendern kann.
+pub fn info(id: &str, instance_id: &str) -> BundleInfo {
+    let Some(bundle) = find(id) else {
+        return BundleInfo::default();
+    };
+
+    let mut out = BundleInfo {
+        items: bundle.items.iter().map(|i| i.name.to_string()).collect(),
+        blocked: bundle.blocked.unwrap_or("").to_string(),
+    };
+
+    if out.blocked.is_empty() {
+        if let Some(inst) = instance::get(instance_id) {
+            if let Err(reason) = fits(bundle, &inst) {
+                out.blocked = reason;
+            }
+        }
+    }
+    out
+}
+
+/// Ob ein Paket in eine Instanz gehoert, und wenn nicht, warum.
+fn fits(bundle: &Bundle, inst: &instance::Instance) -> Result<(), String> {
+    let mc_ok = bundle.requires_mc.is_empty()
+        || bundle
+            .requires_mc
+            .iter()
+            .any(|want| version_fits(want, &inst.mc_version));
+
+    let loader_ok = bundle.requires_loader.is_empty()
+        || bundle
+            .requires_loader
+            .iter()
+            .any(|want| want.eq_ignore_ascii_case(&inst.loader));
+
+    if mc_ok && loader_ok {
+        return Ok(());
+    }
+
+    // Beide Anforderungen in einem Satz, und dahinter, was die Instanz
+    // tatsaechlich ist. Nur "geht nicht" zu sagen laesst jemanden raten,
+    // welche der beiden Halften daneben liegt.
+    let wants = match (bundle.requires_mc.first(), bundle.requires_loader.first()) {
+        (Some(mc), Some(loader)) => format!(
+            "Minecraft {} mit {}",
+            mc.trim_end_matches(".x"),
+            capitalise(loader)
+        ),
+        (Some(mc), None) => format!("Minecraft {}", mc.trim_end_matches(".x")),
+        (None, Some(loader)) => capitalise(loader),
+        (None, None) => String::new(),
+    };
+
+    Err(format!(
+        "Geht nur in einer Instanz mit {} — diese ist {} ({}).",
+        wants,
+        inst.mc_version,
+        capitalise(&inst.loader)
+    ))
+}
+
+fn capitalise(word: &str) -> String {
+    let mut chars = word.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
 }
 
 pub async fn install(
@@ -186,6 +286,12 @@ pub async fn install(
 
     let inst =
         instance::get(&instance_id).ok_or_else(|| anyhow::anyhow!("Instance not found"))?;
+
+    // Auch hier und nicht nur im Fenster. Ein ausgegrauter Knopf ist eine
+    // Bitte an die Oberflaeche; dieser Zweig ist die Zusage.
+    if let Err(reason) = fits(bundle, &inst) {
+        anyhow::bail!("{}", reason);
+    }
 
     let mut report = BundleReport::default();
 
@@ -332,7 +438,7 @@ mod tests {
     fn every_bundle_is_reachable_and_whole() {
         for bundle in BUNDLES {
             assert!(!bundle.items.is_empty(), "{} ist leer", bundle.id);
-            assert!(!contents(bundle.id).is_empty());
+            assert!(!info(bundle.id, "gibt-es-nicht").items.is_empty());
             for item in bundle.items {
                 assert!(!item.name.is_empty());
                 assert!(!item.id.is_empty());
@@ -350,5 +456,76 @@ mod tests {
     fn the_blocked_bundle_stays_blocked() {
         let doktor = BUNDLES.iter().find(|b| b.id == "doktorsam").unwrap();
         assert!(doktor.blocked.is_some());
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+
+    // Von Hand gebaut statt ueber Default: Instance hat keins, und eins nur
+    // fuer diesen Test einzufuehren hiesse, Produktionscode fuer einen Test
+    // zu aendern.
+    fn instance(mc: &str, loader: &str) -> instance::Instance {
+        instance::Instance {
+            id: "test".into(),
+            name: "Test".into(),
+            path: String::new(),
+            mc_version: mc.into(),
+            loader: loader.into(),
+            loader_version: String::new(),
+            version_id: String::new(),
+            ram_mb: 4096,
+            install_client_mod: true,
+            created: String::new(),
+            last_played: 0,
+        }
+    }
+
+    fn best() -> &'static Bundle {
+        BUNDLES.iter().find(|b| b.id == "finanzinstitut").unwrap()
+    }
+
+    #[test]
+    fn the_right_instance_passes() {
+        assert!(fits(best(), &instance("26.2", "fabric")).is_ok());
+        // Eine 26.2.1 ist immer noch 26.2.
+        assert!(fits(best(), &instance("26.2.1", "fabric")).is_ok());
+    }
+
+    #[test]
+    fn the_wrong_version_is_refused_and_says_both_halves() {
+        let err = fits(best(), &instance("1.21.4", "fabric")).unwrap_err();
+        assert!(err.contains("26.2"), "{}", err);
+        assert!(err.contains("Fabric"), "{}", err);
+        // Und was die Instanz wirklich ist, sonst raet man, welche Haelfte
+        // danebenliegt.
+        assert!(err.contains("1.21.4"), "{}", err);
+    }
+
+    #[test]
+    fn the_wrong_loader_is_refused() {
+        assert!(fits(best(), &instance("26.2", "vanilla")).is_err());
+        assert!(fits(best(), &instance("26.2", "forge")).is_err());
+        assert!(fits(best(), &instance("26.2", "quilt")).is_err());
+    }
+
+    #[test]
+    fn the_resource_pack_bundle_takes_anything() {
+        let umbaria = BUNDLES.iter().find(|b| b.id == "umbaria").unwrap();
+        assert!(fits(umbaria, &instance("1.21.4", "vanilla")).is_ok());
+    }
+
+    #[test]
+    fn info_says_why_before_anyone_presses_install() {
+        // Ohne Instanz kann nichts geprueft werden - dann bleibt es leer,
+        // statt etwas zu behaupten.
+        let blind = info("finanzinstitut", "gibt-es-nicht");
+        assert_eq!(blind.items.len(), 3);
+        assert!(blind.blocked.is_empty());
+
+        // Das gesperrte Paket sagt seinen eigenen Grund, nicht den der Instanz.
+        let doktor = info("doktorsam", "gibt-es-nicht");
+        assert_eq!(doktor.blocked, "Currently not available");
     }
 }
