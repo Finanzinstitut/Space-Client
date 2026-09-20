@@ -2,6 +2,7 @@ pub mod auth;
 pub mod backup;
 pub mod bundles;
 pub mod clientmod;
+pub mod clips;
 pub mod config;
 pub mod crash;
 pub mod curseforge;
