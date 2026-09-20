@@ -58,6 +58,8 @@
         <button class="nav-item" data-view="worlds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 20.5 8v8L12 20.8 3.5 16V8z"/><path d="M12 12v8.8M12 12 3.5 8M12 12l8.5-4"/></svg><span data-i18n="nav_worlds"></span></button>
 
         <div class="nav-group">You</div>
+        <button class="nav-item" data-view="clips"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.8" y="5.6" width="13.2" height="12.8" rx="2.4"/><path d="M16 10.4 21.2 7.4v9.2L16 13.6z"/></svg><span data-i18n="nav_clips"></span></button>
+
         <button class="nav-item" data-view="skin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2.8" width="8" height="7" rx="1.6"/><path d="M6 11.2h12v6.2h-3.2V21H9.2v-3.6H6z"/></svg><span data-i18n="nav_skin"></span></button>
         <button class="nav-item" data-view="account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.9"/><path d="M4.6 20.2a7.4 7.4 0 0 1 14.8 0"/></svg><span data-i18n="nav_account"></span></button>
 
@@ -311,6 +313,94 @@
           </div>
 
           <div id="wb-status" class="status-line"></div>
+        </div>
+      </section>
+
+      <!-- CLIPS -->
+      <section id="view-clips" class="view">
+        <h1 data-i18n="clips_title"></h1>
+        <p class="subtitle" data-i18n="clips_sub"></p>
+
+        <div id="clips-missing" class="card wide hidden">
+          <div class="warning-box" data-i18n="clips_no_ffmpeg"></div>
+          <div class="row">
+            <button id="btn-install-ffmpeg" class="btn primary small" data-i18n="clips_get_ffmpeg"></button>
+            <span id="ffmpeg-status" class="status-line"></span>
+          </div>
+        </div>
+
+        <div class="card wide">
+          <div class="set-group">
+            <div class="set-row">
+              <div class="set-text">
+                <div class="set-name" data-i18n="clips_record"></div>
+                <div class="set-desc" id="clips-state"></div>
+              </div>
+              <div class="set-control">
+                <input type="checkbox" id="clips-enabled" class="switch">
+              </div>
+            </div>
+
+            <div class="set-row">
+              <div class="set-text">
+                <div class="set-name" data-i18n="clips_length"></div>
+                <div class="set-desc" data-i18n="clips_length_hint"></div>
+              </div>
+              <div class="set-control">
+                <input type="range" id="clips-seconds" class="set-bar" min="5" max="300" step="5">
+                <span class="set-value" id="clips-seconds-value"></span>
+              </div>
+            </div>
+
+            <div class="set-row">
+              <div class="set-text">
+                <div class="set-name" data-i18n="clips_mic"></div>
+                <div class="set-desc" id="clips-audio-note"></div>
+              </div>
+              <div class="set-control">
+                <input type="checkbox" id="clips-mic" class="switch">
+              </div>
+            </div>
+
+            <div class="set-row">
+              <div class="set-text">
+                <div class="set-name" data-i18n="clips_denoise"></div>
+                <div class="set-desc" data-i18n="clips_denoise_hint"></div>
+              </div>
+              <div class="set-control">
+                <input type="checkbox" id="clips-denoise" class="switch">
+              </div>
+            </div>
+
+            <div class="set-row">
+              <div class="set-text">
+                <div class="set-name" data-i18n="clips_devices"></div>
+                <div class="set-desc" data-i18n="clips_devices_hint"></div>
+              </div>
+              <div class="set-control">
+                <select id="clips-system-device"></select>
+                <select id="clips-mic-device"></select>
+              </div>
+            </div>
+          </div>
+
+          <div class="row">
+            <button id="btn-clip-now" class="btn primary small" data-i18n="clips_save_now"></button>
+            <button id="btn-clip-folder" class="btn small" data-i18n="clips_folder"></button>
+            <span id="clips-status" class="status-line"></span>
+          </div>
+        </div>
+
+        <div class="card wide">
+          <div id="clip-player-wrap" class="hidden">
+            <video id="clip-player" controls preload="metadata"></video>
+            <div class="row">
+              <span id="clip-playing" class="hint"></span>
+              <button id="btn-clip-delete" class="btn small danger" data-i18n="btn_delete"></button>
+            </div>
+          </div>
+          <div id="clip-list" class="clip-grid"></div>
+          <p id="clip-empty" class="hint" data-i18n="clips_none"></p>
         </div>
       </section>
 

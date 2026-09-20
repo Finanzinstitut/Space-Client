@@ -1025,6 +1025,75 @@ fn delete_backup(instance_id: String, file: String) -> Result<(), String> {
     launcher::backup::remove(&instance_id, &file).map_err(|e| e.to_string())
 }
 
+// ---------------- clips ----------------
+
+#[tauri::command]
+fn clip_status() -> launcher::clips::ClipStatus {
+    launcher::clips::status()
+}
+
+#[tauri::command]
+fn clip_settings() -> launcher::clips::CaptureSettings {
+    launcher::clips::load_capture()
+}
+
+#[tauri::command]
+fn set_clip_settings(
+    settings: launcher::clips::CaptureSettings,
+) -> Result<launcher::clips::ClipStatus, String> {
+    launcher::clips::save_capture(&settings)?;
+    // Applied at once rather than on the next sweep: a person who just moved
+    // the length slider expects the next clip to be that long.
+    launcher::clips::stop();
+    launcher::clips::tend();
+    Ok(launcher::clips::status())
+}
+
+#[tauri::command]
+fn list_audio_devices() -> Vec<launcher::clips::AudioDevice> {
+    launcher::clips::list_devices()
+}
+
+#[tauri::command]
+async fn install_ffmpeg() -> Result<String, String> {
+    launcher::clips::ensure_ffmpeg().await
+}
+
+#[tauri::command]
+fn list_clips() -> Vec<launcher::clips::Clip> {
+    launcher::clips::list_clips()
+}
+
+#[tauri::command]
+fn save_clip_now() -> Result<String, String> {
+    let status = launcher::clips::status();
+    launcher::clips::save_clip(status.seconds)
+}
+
+#[tauri::command]
+fn delete_clip(name: String) -> Result<(), String> {
+    launcher::clips::delete_clip(&name)
+}
+
+#[tauri::command]
+fn open_clip_folder() -> Result<(), String> {
+    let dir = launcher::clips::out_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    open_folder(&dir)
+}
+
+fn open_folder(dir: &std::path::Path) -> Result<(), String> {
+    let result = if cfg!(target_os = "windows") {
+        std::process::Command::new("explorer").arg(dir).spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(dir).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(dir).spawn()
+    };
+    result.map_err(|e| format!("Could not open the folder: {}", e))?;
+    Ok(())
+}
+
 fn main() {
     let config = LauncherConfig::load();
     config.ensure_dirs().ok();
@@ -1104,7 +1173,40 @@ fn main() {
             search_curseforge,
             list_curseforge_files,
             install_curseforge_file,
+            clip_status,
+            clip_settings,
+            set_clip_settings,
+            list_audio_devices,
+            install_ffmpeg,
+            list_clips,
+            save_clip_now,
+            delete_clip,
+            open_clip_folder,
         ])
+        .setup(|app| {
+            // The clip keeper: starts and stops the recorder as the game and
+            // the launcher ask for it, and picks up the key presses the mod
+            // left in its folder. A sweep twice a second, which is well under
+            // what anybody notices between pressing the key and the clip
+            // appearing, and cheap enough to leave running all session.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let made = tauri::async_runtime::spawn_blocking(|| {
+                        launcher::clips::tend();
+                        launcher::clips::take_requests()
+                    })
+                    .await
+                    .unwrap_or_default();
+
+                    for file in made {
+                        let _ = handle.emit("clip-saved", file);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            });
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running Space Client");
 }

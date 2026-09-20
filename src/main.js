@@ -100,6 +100,10 @@ function showView(name) {
   if (name === "servers") loadServerProfiles();
   if (name === "worlds") loadBackups();
 
+  // Der Ordner gehoert nicht dieser Seite: das Spiel legt waehrend der Sitzung
+  // Clips hinein, also wird beim Oeffnen gelesen statt einmal beim Start.
+  if (name === "clips") refreshClips();
+
   // The figure's loop stops itself whenever its canvas is off screen, so
   // coming back to this view has to wake it rather than assume it kept going.
   if (name === "instances") homeSkinViewer()?.redraw();
@@ -3210,4 +3214,254 @@ $("btn-bundle-cancel").addEventListener("click", closeBundleModal);
 $("btn-bundle-install").addEventListener("click", runBundleInstall);
 $("bundle-backdrop").addEventListener("click", (event) => {
   if (event.target === $("bundle-backdrop")) closeBundleModal();
+});
+
+// ---------------------------------------------------------------- Clips
+
+/*
+ * Die Aufnahme laeuft hier, nicht im Spiel.
+ *
+ * Der ganze Computerton gehoert dazu, und eine Mod im Spiel kann ihn nicht
+ * hoeren - die Java-Audio-API hat auf keiner Plattform einen Rueckweg vom
+ * Lautsprecher. Der Launcher ist ein nativer Prozess, der ohnehin nebenher
+ * laeuft, also haelt er FFmpeg auf einem Ring kurzer Stuecke und setzt beim
+ * Tastendruck die letzten davon zusammen. Diese Seite ist nur die Bedienung.
+ */
+
+const convertFileSrc = window.__TAURI__.core.convertFileSrc;
+
+let clipSettings = null;
+let clipStatus = null;
+let playingClip = null;
+
+function clipStateText(status, settings) {
+  if (!settings.enabled && !status.wanted_by_game) return t("clips_state_off");
+  if (!status.recording) return t("clips_state_dead");
+  if (status.wanted_by_game && !settings.enabled) return t("clips_state_game");
+  return t("clips_state_on");
+}
+
+async function refreshClips(reloadList = true) {
+  try {
+    clipSettings = await invoke("clip_settings");
+    clipStatus = await invoke("clip_status");
+  } catch (e) {
+    setStatus("clips-status", String(e), "error");
+    return;
+  }
+
+  $("clips-missing").classList.toggle("hidden", clipStatus.ffmpeg);
+
+  $("clips-enabled").checked = clipSettings.enabled;
+  $("clips-mic").checked = clipSettings.microphone;
+  $("clips-denoise").checked = clipSettings.noise_cancel;
+  $("clips-denoise").disabled = !clipSettings.microphone;
+
+  // Die Laenge gehoert dem Spiel, sobald es eine gesagt hat. Der Regler zeigt
+  // dann den geltenden Wert und laesst sich nicht verschieben - eine Zahl, die
+  // sich ziehen laesst und nichts tut, waere schlimmer als eine gesperrte.
+  const fromGame = clipStatus.wanted_by_game;
+  $("clips-seconds").value = clipStatus.seconds;
+  $("clips-seconds").disabled = fromGame;
+  $("clips-seconds-value").textContent = clipStatus.seconds + "s"
+    + (fromGame ? " · " + t("clips_state_game") : "");
+
+  // Die Tonlage steht beim Zustand, nicht beim Mikrofonschalter: sie
+  // beschreibt beide Quellen, und unter "Mikrofon aufnehmen" las sie sich, als
+  // ginge es nur um das Mikrofon.
+  const sound = t("clips_audio_" + (clipStatus.audio_state || "none"));
+  $("clips-state").textContent = clipStateText(clipStatus, clipSettings) + " " + sound;
+  $("clips-audio-note").textContent = t("clips_mic_hint");
+
+  await fillClipDevices();
+  if (reloadList) await loadClipList();
+}
+
+async function fillClipDevices() {
+  const system = $("clips-system-device");
+  const mic = $("clips-mic-device");
+  if (system.dataset.filled === "1") {
+    system.value = clipSettings.system_device;
+    mic.value = clipSettings.mic_device;
+    return;
+  }
+
+  let devices = [];
+  try {
+    devices = await invoke("list_audio_devices");
+  } catch {
+    devices = [];
+  }
+
+  // Ohne Geraeteliste - auf allem ausser Windows - haben die Auswahlfelder
+  // nichts zu bieten, also stehen sie auch nicht da
+  const row = system.closest(".set-row");
+  if (row) row.classList.toggle("hidden", devices.length === 0);
+  if (devices.length === 0) return;
+
+  const build = (select, chosen) => {
+    select.replaceChildren();
+    const auto = document.createElement("option");
+    auto.value = "";
+    auto.textContent = t("clips_auto");
+    select.appendChild(auto);
+    devices.forEach((device) => {
+      const option = document.createElement("option");
+      option.value = device.name;
+      option.textContent = device.name;
+      select.appendChild(option);
+    });
+    select.value = chosen || "";
+  };
+
+  build(system, clipSettings.system_device);
+  build(mic, clipSettings.mic_device);
+  system.dataset.filled = "1";
+}
+
+async function saveClipSettings() {
+  const next = {
+    ...clipSettings,
+    enabled: $("clips-enabled").checked,
+    microphone: $("clips-mic").checked,
+    noise_cancel: $("clips-denoise").checked,
+    system_device: $("clips-system-device").value || "",
+    mic_device: $("clips-mic-device").value || "",
+  };
+  if (!$("clips-seconds").disabled) {
+    next.seconds = Number($("clips-seconds").value) || 30;
+  }
+
+  try {
+    clipStatus = await invoke("set_clip_settings", { settings: next });
+    clipSettings = next;
+    await refreshClips(false);
+  } catch (e) {
+    setStatus("clips-status", String(e), "error");
+  }
+}
+
+function prettySize(bytes) {
+  if (bytes >= 1024 * 1024 * 1024) return (bytes / 1073741824).toFixed(1) + " GB";
+  if (bytes >= 1024 * 1024) return Math.round(bytes / 1048576) + " MB";
+  return Math.max(1, Math.round(bytes / 1024)) + " KB";
+}
+
+function prettyLength(seconds) {
+  const whole = Math.round(seconds);
+  const minutes = Math.floor(whole / 60);
+  const rest = whole % 60;
+  return minutes > 0 ? `${minutes}:${String(rest).padStart(2, "0")}` : `${rest}s`;
+}
+
+async function loadClipList() {
+  let clips = [];
+  try {
+    clips = await invoke("list_clips");
+  } catch (e) {
+    setStatus("clips-status", String(e), "error");
+    return;
+  }
+
+  const list = $("clip-list");
+  list.replaceChildren();
+  $("clip-empty").classList.toggle("hidden", clips.length > 0);
+
+  clips.forEach((clip) => {
+    const card = document.createElement("button");
+    card.className = "clip-card";
+    card.innerHTML = `
+      <div class="clip-thumb"></div>
+      <div class="clip-meta">
+        <div class="clip-name"></div>
+        <div class="clip-sub"></div>
+      </div>`;
+
+    const thumb = card.querySelector(".clip-thumb");
+    if (clip.poster) {
+      const image = document.createElement("img");
+      image.src = convertFileSrc(clip.poster);
+      image.alt = "";
+      thumb.appendChild(image);
+    }
+
+    card.querySelector(".clip-name").textContent = clip.name;
+    card.querySelector(".clip-sub").textContent =
+      `${prettyLength(clip.seconds)} · ${prettySize(clip.bytes)}`;
+
+    card.addEventListener("click", () => playClip(clip));
+    list.appendChild(card);
+  });
+}
+
+function playClip(clip) {
+  playingClip = clip;
+  const player = $("clip-player");
+  player.src = convertFileSrc(clip.file);
+  $("clip-playing").textContent = clip.name;
+  $("clip-player-wrap").classList.remove("hidden");
+  player.play().catch(() => {
+    // Ein Browser, der die Wiedergabe verweigert, ist kein Fehler dieser Seite
+  });
+}
+
+$("clips-enabled").addEventListener("change", saveClipSettings);
+$("clips-mic").addEventListener("change", saveClipSettings);
+$("clips-denoise").addEventListener("change", saveClipSettings);
+$("clips-system-device").addEventListener("change", saveClipSettings);
+$("clips-mic-device").addEventListener("change", saveClipSettings);
+
+$("clips-seconds").addEventListener("input", () => {
+  $("clips-seconds-value").textContent = $("clips-seconds").value + "s";
+});
+$("clips-seconds").addEventListener("change", saveClipSettings);
+
+$("btn-clip-now").addEventListener("click", async () => {
+  setStatus("clips-status", "…");
+  try {
+    await invoke("save_clip_now");
+    setStatus("clips-status", t("clips_saved"), "success");
+    await loadClipList();
+  } catch (e) {
+    setStatus("clips-status", String(e), "error");
+  }
+});
+
+$("btn-clip-folder").addEventListener("click", () => {
+  invoke("open_clip_folder").catch((e) => setStatus("clips-status", String(e), "error"));
+});
+
+$("btn-clip-delete").addEventListener("click", async () => {
+  if (!playingClip) return;
+  if (!confirm(t("clips_confirm_delete"))) return;
+  try {
+    await invoke("delete_clip", { name: playingClip.name });
+    $("clip-player").removeAttribute("src");
+    $("clip-player-wrap").classList.add("hidden");
+    playingClip = null;
+    setStatus("clips-status", t("clips_deleted"), "success");
+    await loadClipList();
+  } catch (e) {
+    setStatus("clips-status", String(e), "error");
+  }
+});
+
+$("btn-install-ffmpeg").addEventListener("click", async () => {
+  setStatus("ffmpeg-status", "…");
+  $("btn-install-ffmpeg").disabled = true;
+  try {
+    const note = await invoke("install_ffmpeg");
+    setStatus("ffmpeg-status", note, "success");
+    await refreshClips();
+  } catch (e) {
+    setStatus("ffmpeg-status", String(e), "error");
+  } finally {
+    $("btn-install-ffmpeg").disabled = false;
+  }
+});
+
+// Der Launcher sagt Bescheid, wenn das Spiel einen Clip angefordert hat
+listen("clip-saved", () => {
+  setStatus("clips-status", t("clips_saved"), "success");
+  loadClipList();
 });
