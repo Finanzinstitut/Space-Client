@@ -104,8 +104,8 @@ async fn check_update(state: State<'_, AppState>) -> Result<UpdateInfo, String> 
 
 /// Fetches the newest installer and returns its path, ready to be started.
 #[tauri::command]
-async fn download_update() -> Result<String, String> {
-    update::download_update().await.map_err(|e| e.to_string())
+async fn download_update(app: tauri::AppHandle) -> Result<String, String> {
+    update::download_update(&app).await.map_err(|e| e.to_string())
 }
 
 /// Was in einem Paket steckt und ob es in die gewaehlte Instanz passt.
@@ -131,6 +131,10 @@ async fn install_bundle(
 }
 
 /// Starts the downloaded installer and steps aside so it can replace us.
+///
+/// The installer runs without questions and starts the launcher again when it
+/// is done, so from the outside this is one click: update, brief progress
+/// window, new launcher.
 #[tauri::command]
 async fn run_installer(app: tauri::AppHandle) -> Result<(), String> {
     // Takes no path. The installer to start is the one download_update
