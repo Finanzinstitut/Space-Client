@@ -134,7 +134,9 @@ export const translations = {
     crash_none: "Nothing recognised in this log. Open it on mclo.gs and share the link when asking for help.",
     crash_failed: "Could not analyse this log",
     update_downloading: "Downloading the update...",
-    update_ready: "Downloaded. Starting the installer - the launcher will close.",
+    update_downloading_pct: "Downloading... {pct}% ({done} / {total} MB)",
+    update_downloading_mb: "Downloading... {done} MB",
+    update_ready: "Installing - the launcher restarts by itself in a moment.",
     update_failed: "Update download failed:",
     btn_new_instance: "+ New Instance",
     field_client_mod: "Install the Space Client mod",
@@ -336,7 +338,7 @@ export const translations = {
 
     update_available: "Update available",
     update_text: "Version {v} is available. You are running {c}.",
-    btn_download_update: "Download",
+    btn_download_update: "Update & restart",
     btn_later: "Later",
 
     stage_manifest: "Loading version manifest",
@@ -488,7 +490,9 @@ export const translations = {
     crash_none: "In diesem Log wurde nichts Bekanntes gefunden. Öffne es auf mclo.gs und teile den Link, wenn du um Hilfe bittest.",
     crash_failed: "Log konnte nicht analysiert werden",
     update_downloading: "Update wird heruntergeladen...",
-    update_ready: "Fertig. Installer wird gestartet - der Launcher schließt sich.",
+    update_downloading_pct: "Wird heruntergeladen... {pct}% ({done} / {total} MB)",
+    update_downloading_mb: "Wird heruntergeladen... {done} MB",
+    update_ready: "Wird installiert - der Launcher startet gleich von selbst neu.",
     update_failed: "Update-Download fehlgeschlagen:",
     btn_new_instance: "+ Neue Instanz",
     field_client_mod: "Space-Client-Mod installieren",
@@ -690,7 +694,7 @@ export const translations = {
 
     update_available: "Update verfügbar",
     update_text: "Version {v} ist verfügbar. Du nutzt {c}.",
-    btn_download_update: "Herunterladen",
+    btn_download_update: "Aktualisieren & neu starten",
     btn_later: "Später",
 
     stage_manifest: "Lade Versions-Manifest",

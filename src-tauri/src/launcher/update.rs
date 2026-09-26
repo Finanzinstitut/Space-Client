@@ -1,4 +1,13 @@
 use serde::Serialize;
+use tauri::{AppHandle, Emitter};
+
+/// How far the update download has got, for the banner's progress bar.
+#[derive(Debug, Serialize, Clone)]
+pub struct UpdateProgress {
+    pub done: u64,
+    /// 0 when the server did not say how big the file is.
+    pub total: u64,
+}
 
 /// Where the launcher looks for new releases.
 pub const REPO: &str = "Finanzinstitut/Space-Client";
@@ -115,7 +124,7 @@ pub async fn check_for_update() -> UpdateInfo {
 /// is deliberate - it keeps the download restartable and lets the user decide
 /// when to be interrupted, rather than closing the launcher out from under a
 /// running game.
-pub async fn download_update() -> anyhow::Result<String> {
+pub async fn download_update(app: &AppHandle) -> anyhow::Result<String> {
     let url = format!("https://api.github.com/repos/{}/releases/latest", REPO);
     let client = reqwest::Client::builder()
         .user_agent("SpaceClient/0.1")
@@ -163,7 +172,23 @@ pub async fn download_update() -> anyhow::Result<String> {
         .and_then(|u| u.as_str())
         .ok_or_else(|| anyhow::anyhow!("The installer has no download link"))?;
 
-    let bytes = client.get(link).send().await?.bytes().await?;
+    // Read in pieces rather than in one go, so the banner can show how far it
+    // has got. A launcher that goes quiet for thirty seconds after "Update"
+    // looks exactly like one that has hung.
+    let mut resp = client.get(link).send().await?.error_for_status()?;
+    let total = resp.content_length().unwrap_or(0);
+    let mut bytes: Vec<u8> = Vec::with_capacity(total as usize);
+    let mut last_emit = 0u64;
+    while let Some(chunk) = resp.chunk().await? {
+        bytes.extend_from_slice(&chunk);
+        let done = bytes.len() as u64;
+        // Every quarter megabyte is plenty for a bar and spares the page a
+        // flood of events on a fast line.
+        if done - last_emit >= 256 * 1024 || done == total {
+            last_emit = done;
+            let _ = app.emit("update://progress", UpdateProgress { done, total });
+        }
+    }
 
     // Checked before it is written, not after. An installer that fails its
     // hash should never exist on disk in the first place - once it is there,
@@ -278,7 +303,15 @@ async fn verify_download(
     Ok(())
 }
 
-/// Starts the installer this process downloaded and verified.
+/// Starts the installer this process downloaded and verified, without asking
+/// anything.
+///
+/// The flags are the ones Tauri's own NSIS installer understands:
+///   /P       passive - a small progress window, no pages to click through
+///   /UPDATE  update mode - keeps the user's shortcut choices as they were
+///   /R       start the launcher again once the files are in place
+/// The installer also closes this launcher itself if it is still running when
+/// it gets to copying files, so the order of the two exits does not matter.
 ///
 /// Done here rather than through the shell plugin because that plugin only
 /// opens things that look like URLs - a local path fails its scope check, which
@@ -302,6 +335,7 @@ pub fn run_installer() -> anyhow::Result<()> {
     }
 
     std::process::Command::new(&file)
+        .args(["/P", "/UPDATE", "/R"])
         .spawn()
         .map_err(|e| anyhow::anyhow!("Could not start the installer: {}", e))?;
 

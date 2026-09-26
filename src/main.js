@@ -2266,41 +2266,62 @@ async function checkUpdate() {
   }
 }
 
+// The download reports how far it has got; shown as a bar in the banner.
+listen("update://progress", (event) => {
+  const p = event.payload || {};
+  const bar = $("update-bar");
+  if (!bar) return;
+  bar.classList.remove("hidden");
+  const mb = (n) => (n / 1048576).toFixed(1);
+  if (p.total > 0) {
+    const pct = Math.min(100, Math.round((p.done / p.total) * 100));
+    $("update-bar-fill").style.width = pct + "%";
+    $("update-text").textContent = t("update_downloading_pct", {
+      pct, done: mb(p.done), total: mb(p.total),
+    });
+  } else {
+    $("update-text").textContent = t("update_downloading_mb", { done: mb(p.done) });
+  }
+});
+
 /**
- * Downloads the new installer and offers to start it.
+ * Downloads the new version, installs it and restarts - one click.
  *
  * The launcher cannot overwrite itself while running, so the installer is
- * fetched first and only then started - at which point this window closes and
- * the installer takes over. Anything already playing keeps playing: the game
- * runs in its own process and does not care what happens to the launcher.
+ * fetched first and then started in passive mode: a small progress window,
+ * nothing to click, and it starts the new launcher itself when it is done.
+ * This window closes in the meantime. Anything already playing keeps playing:
+ * the game runs in its own process.
  */
 async function installUpdate(info) {
   var button = $("btn-update-download");
+  var later = $("btn-update-later");
   var text = $("update-text");
   var original = text ? text.textContent : "";
 
   if (button) button.disabled = true;
+  if (later) later.disabled = true;
   if (text) text.textContent = t("update_downloading");
 
   try {
     // The path comes back for the message only; the Rust side keeps its own
     // copy and starts that, so nothing here can redirect what gets executed.
     await invoke("download_update");
+    $("update-bar-fill").style.width = "100%";
     if (text) text.textContent = t("update_ready");
 
     // Started on the Rust side: the shell plugin only opens URLs, and a local
     // file path is rejected by its scope check.
     await invoke("run_installer");
   } catch (e) {
+    $("update-bar").classList.add("hidden");
     if (text) text.textContent = t("update_failed") + " " + String(e);
     if (info && info.release_url) {
       shell.open(info.release_url).catch(function () {});
     }
-  } finally {
     if (button) button.disabled = false;
-    if (text && original && text.textContent === t("update_ready")) {
-      text.textContent = original;
-    }
+    if (later) later.disabled = false;
+    if (text && !original) text.textContent = "";
   }
 }
 
