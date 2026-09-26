@@ -93,6 +93,11 @@ impl AccountStore {
     }
 }
 
+/// Whether an account was already in the store before a sign-in.
+pub fn already_known(store: &AccountStore, uuid: &str) -> bool {
+    store.accounts.iter().any(|a| a.uuid == uuid)
+}
+
 /// The signed-in Minecraft account. The refresh token lets us log back in
 /// silently on the next launcher start.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -118,16 +123,6 @@ impl Account {
         let mut store = AccountStore::load();
         store.upsert(self.clone());
         store.save()
-    }
-
-    /// Signs out of every account.
-    pub fn clear() -> anyhow::Result<()> {
-        for f in [account_file(), accounts_file()] {
-            if f.exists() {
-                fs::remove_file(f)?;
-            }
-        }
-        Ok(())
     }
 
     pub fn is_expired(&self) -> bool {
@@ -504,4 +499,65 @@ pub async fn current_account() -> anyhow::Result<Account> {
         return refresh_account(&account).await;
     }
     Ok(account)
+}
+
+#[cfg(test)]
+mod store_tests {
+    use super::*;
+
+    fn account(name: &str, uuid: &str) -> Account {
+        Account {
+            username: name.into(),
+            uuid: uuid.into(),
+            access_token: "t".into(),
+            refresh_token: "r".into(),
+            expires_at: 0,
+            offline: false,
+        }
+    }
+
+    #[test]
+    fn two_different_accounts_are_both_kept() {
+        let mut store = AccountStore::default();
+        store.upsert(account("Finanzinstitut", "a"));
+        store.upsert(account("MvRtq", "b"));
+
+        assert_eq!(store.accounts.len(), 2);
+        assert_eq!(store.active_uuid, "b", "the newest one is the one in use");
+    }
+
+    #[test]
+    fn the_same_account_again_is_refreshed_not_doubled() {
+        let mut store = AccountStore::default();
+        store.upsert(account("Finanzinstitut", "a"));
+        let mut again = account("Finanzinstitut", "a");
+        again.access_token = "fresh".into();
+        store.upsert(again);
+
+        assert_eq!(store.accounts.len(), 1);
+        assert_eq!(store.accounts[0].access_token, "fresh");
+    }
+
+    #[test]
+    fn a_repeat_sign_in_is_recognised_as_one() {
+        let mut store = AccountStore::default();
+        store.upsert(account("Finanzinstitut", "a"));
+
+        assert!(already_known(&store, "a"), "the same account again");
+        assert!(!already_known(&store, "b"), "a new one is new");
+    }
+
+    #[test]
+    fn signing_out_leaves_the_other_accounts_alone() {
+        let mut store = AccountStore::default();
+        store.upsert(account("Finanzinstitut", "a"));
+        store.upsert(account("MvRtq", "b"));          // b is active now
+
+        let active = store.active_uuid.clone();
+        store.remove(&active);
+
+        assert_eq!(store.accounts.len(), 1, "one left, not none");
+        assert_eq!(store.accounts[0].username, "Finanzinstitut");
+        assert_eq!(store.active_uuid, "a", "and it takes over");
+    }
 }
