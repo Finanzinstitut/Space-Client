@@ -86,7 +86,10 @@ pub struct CaptureSettings {
 }
 
 fn default_seconds() -> u32 { 30 }
-fn default_fps() -> u32 { 60 }
+/// Thirty rather than sixty: the recorder runs the whole time the game does,
+/// and every frame it grabs is work taken from the game. Thirty is plenty for
+/// a clip that is watched once and shared.
+fn default_fps() -> u32 { 30 }
 fn default_quality() -> u32 { 23 }
 fn default_true() -> bool { true }
 
@@ -123,10 +126,16 @@ pub struct ModWish {
 fn wish_file() -> PathBuf { clip_dir().join("mod.json") }
 
 pub fn load_capture() -> CaptureSettings {
-    std::fs::read_to_string(capture_file())
+    let mut settings: CaptureSettings = std::fs::read_to_string(capture_file())
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // Sixty was the old default and there has never been a control for it,
+    // so a saved 60 is the old default written down, not a choice
+    if settings.fps == 60 {
+        settings.fps = default_fps();
+    }
+    settings
 }
 
 pub fn save_capture(settings: &CaptureSettings) -> Result<(), String> {
@@ -337,10 +346,12 @@ pub fn list_devices() -> Vec<AudioDevice> {
         return Vec::new();
     };
 
-    let output = Command::new(ffmpeg)
+    let mut command = Command::new(ffmpeg);
+    command
         .args(["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"])
-        .stdin(Stdio::null())
-        .output();
+        .stdin(Stdio::null());
+    quiet(&mut command, false);
+    let output = command.output();
 
     match output {
         Ok(done) => parse_devices(&String::from_utf8_lossy(&done.stderr)),
@@ -379,11 +390,147 @@ pub struct Inputs {
     pub microphone: Option<String>,
 }
 
-/// The whole FFmpeg command line for the ring recorder.
-///
-/// A pure function returning the arguments, which is the only honest way to
-/// test this: the command cannot be run here - there is no screen and no sound
-/// card - but every mistake worth making is a mistake in these strings.
+/// How the screen is grabbed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Capture {
+    /// GDI's BitBlt of the whole desktop. Works everywhere, and is the costly
+    /// one: every frame is copied from the GPU back into system memory.
+    Gdi,
+    /// The Desktop Duplication API through FFmpeg's ddagrab: the frame stays
+    /// on the GPU until it is downloaded once, far cheaper than GDI.
+    Duplication,
+}
+
+/// What turns frames into video.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Encoder {
+    /// The graphics card's own encoder - NVIDIA, AMD, Intel. Nearly free for
+    /// the CPU, which is what the game needs it for.
+    Nvenc,
+    Amf,
+    Qsv,
+    /// Software, on the CPU. The fallback when no card encoder answers.
+    X264,
+}
+
+/// The capture and encoder the recorder uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Pipeline {
+    pub capture: Capture,
+    pub encoder: Encoder,
+}
+
+impl Default for Pipeline {
+    fn default() -> Self {
+        Pipeline { capture: Capture::Gdi, encoder: Encoder::X264 }
+    }
+}
+
+impl Pipeline {
+    pub fn describe(&self) -> String {
+        let capture = match self.capture {
+            Capture::Gdi => "GDI",
+            Capture::Duplication => "Desktop Duplication",
+        };
+        let encoder = match self.encoder {
+            Encoder::Nvenc => "NVIDIA NVENC",
+            Encoder::Amf => "AMD AMF",
+            Encoder::Qsv => "Intel Quick Sync",
+            Encoder::X264 => "x264 (CPU)",
+        };
+        format!("{capture} + {encoder}")
+    }
+}
+
+/// The screen input for one pipeline, at the given frame rate.
+fn video_input(platform: Platform, capture: Capture, fps: u32) -> Vec<String> {
+    match platform {
+        Platform::Windows => match capture {
+            Capture::Duplication => vec![
+                "-f".into(), "lavfi".into(),
+                "-i".into(),
+                format!("ddagrab=output_idx=0:framerate={fps}:draw_mouse=0,hwdownload,format=bgra"),
+            ],
+            Capture::Gdi => vec![
+                "-f".into(), "gdigrab".into(),
+                "-framerate".into(), fps.to_string(),
+                "-draw_mouse".into(), "0".into(),
+                "-i".into(), "desktop".into(),
+            ],
+        },
+        Platform::Linux => {
+            let display = std::env::var("DISPLAY").unwrap_or_else(|_| ":0.0".into());
+            vec![
+                "-f".into(), "x11grab".into(),
+                "-framerate".into(), fps.to_string(),
+                "-i".into(), display,
+            ]
+        }
+        Platform::Mac => vec![
+            "-f".into(), "avfoundation".into(),
+            "-framerate".into(), fps.to_string(),
+            "-i".into(), "1:none".into(),
+        ],
+    }
+}
+
+/// The video encoder arguments. A keyframe every segment on every encoder,
+/// because a stitched clip can only be cut on one.
+fn encoder_args(encoder: Encoder, quality: u32, fps: u32) -> Vec<String> {
+    let keyint = (fps * SEGMENT_SECONDS).to_string();
+    let q = quality.to_string();
+    let mut args: Vec<String> = match encoder {
+        Encoder::Nvenc => vec![
+            "-c:v".into(), "h264_nvenc".into(),
+            "-preset".into(), "p2".into(),
+            "-rc".into(), "vbr".into(),
+            "-cq".into(), q,
+            "-b:v".into(), "0".into(),
+            "-pix_fmt".into(), "nv12".into(),
+        ],
+        Encoder::Amf => vec![
+            "-c:v".into(), "h264_amf".into(),
+            "-usage".into(), "lowlatency".into(),
+            "-quality".into(), "speed".into(),
+            "-rc".into(), "cqp".into(),
+            "-qp_i".into(), q.clone(),
+            "-qp_p".into(), q,
+            "-pix_fmt".into(), "nv12".into(),
+        ],
+        Encoder::Qsv => vec![
+            "-c:v".into(), "h264_qsv".into(),
+            "-preset".into(), "veryfast".into(),
+            "-global_quality".into(), q,
+            "-pix_fmt".into(), "nv12".into(),
+        ],
+        // ultrafast and zerolatency: a fraction of what veryfast cost, for
+        // files that are somewhat larger - the right trade for something that
+        // runs next to a game all session. Two threads, so it cannot take
+        // every core the game wanted.
+        Encoder::X264 => vec![
+            "-c:v".into(), "libx264".into(),
+            "-preset".into(), "ultrafast".into(),
+            "-tune".into(), "zerolatency".into(),
+            "-threads".into(), "2".into(),
+            "-crf".into(), q,
+            "-pix_fmt".into(), "yuv420p".into(),
+        ],
+    };
+    args.extend([
+        "-g".into(), keyint.clone(),
+        "-force_key_frames".into(), format!("expr:gte(t,n_forced*{SEGMENT_SECONDS})"),
+    ]);
+    if encoder == Encoder::X264 {
+        args.extend([
+            "-keyint_min".into(), keyint,
+            "-sc_threshold".into(), "0".into(),
+        ]);
+    }
+    args
+}
+
+/// The whole FFmpeg command line for the ring recorder, on the default
+/// pipeline. See record_args_with.
 pub fn record_args(
     platform: Platform,
     settings: &CaptureSettings,
@@ -391,34 +538,26 @@ pub fn record_args(
     seconds: u32,
     buffer: &Path,
 ) -> Vec<String> {
+    record_args_with(platform, settings, inputs, seconds, buffer, Pipeline::default())
+}
+
+/// The whole FFmpeg command line for the ring recorder.
+///
+/// A pure function returning the arguments, which is the only honest way to
+/// test this: the command cannot be run here - there is no screen and no sound
+/// card - but every mistake worth making is a mistake in these strings.
+pub fn record_args_with(
+    platform: Platform,
+    settings: &CaptureSettings,
+    inputs: &Inputs,
+    seconds: u32,
+    buffer: &Path,
+    pipeline: Pipeline,
+) -> Vec<String> {
     let mut args: Vec<String> = vec!["-hide_banner".into(), "-loglevel".into(), "error".into(), "-y".into()];
 
     // --- the screen ---
-    match platform {
-        Platform::Windows => {
-            args.extend([
-                "-f".into(), "gdigrab".into(),
-                "-framerate".into(), settings.fps.to_string(),
-                "-draw_mouse".into(), "0".into(),
-                "-i".into(), "desktop".into(),
-            ]);
-        }
-        Platform::Linux => {
-            let display = std::env::var("DISPLAY").unwrap_or_else(|_| ":0.0".into());
-            args.extend([
-                "-f".into(), "x11grab".into(),
-                "-framerate".into(), settings.fps.to_string(),
-                "-i".into(), display,
-            ]);
-        }
-        Platform::Mac => {
-            args.extend([
-                "-f".into(), "avfoundation".into(),
-                "-framerate".into(), settings.fps.to_string(),
-                "-i".into(), "1:none".into(),
-            ]);
-        }
-    }
+    args.extend(video_input(platform, pipeline.capture, settings.fps));
 
     // --- the sound ---
     let mut audio_inputs = 0;
@@ -467,18 +606,7 @@ pub fn record_args(
     }
 
     // --- the picture ---
-    //
-    // A keyframe every segment, because a stitched clip can only be cut on one.
-    let keyint = (settings.fps * SEGMENT_SECONDS).to_string();
-    args.extend([
-        "-c:v".into(), "libx264".into(),
-        "-preset".into(), "veryfast".into(),
-        "-crf".into(), settings.quality.to_string(),
-        "-pix_fmt".into(), "yuv420p".into(),
-        "-g".into(), keyint.clone(),
-        "-keyint_min".into(), keyint,
-        "-sc_threshold".into(), "0".into(),
-    ]);
+    args.extend(encoder_args(pipeline.encoder, settings.quality, settings.fps));
 
     // --- the ring ---
     //
@@ -572,16 +700,17 @@ fn read_segments(dir: &Path) -> Vec<Segment> {
 /// Asks ffprobe how long a file is.
 fn duration_of(file: &Path) -> Option<f64> {
     let probe = ffprobe_path()?;
-    let output = Command::new(probe)
+    let mut command = Command::new(probe);
+    command
         .args([
             "-v", "error",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
         ])
         .arg(file)
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
+        .stdin(Stdio::null());
+    quiet(&mut command, false);
+    let output = command.output().ok()?;
 
     String::from_utf8_lossy(&output.stdout).trim().parse::<f64>().ok()
 }
@@ -753,9 +882,11 @@ pub fn stitch(
 }
 
 fn run(program: &Path, args: &[String]) -> Result<(), String> {
-    let output = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
+    let mut command = Command::new(program);
+    command.args(args).stdin(Stdio::null());
+    // Stitching a clip happens while the game runs too
+    quiet(&mut command, true);
+    let output = command
         .output()
         .map_err(|e| format!("could not start FFmpeg: {e}"))?;
 
@@ -794,6 +925,8 @@ pub struct ClipStatus {
     pub mic_device: String,
     pub wanted_by_game: bool,
     pub clip_folder: String,
+    /// How the screen is being recorded, once the recorder has started once.
+    pub pipeline: String,
 }
 
 pub fn resolve_inputs(settings: &CaptureSettings, devices: &[AudioDevice]) -> Inputs {
@@ -846,8 +979,80 @@ pub fn status() -> ClipStatus {
         mic_device: inputs.microphone.unwrap_or_default(),
         wanted_by_game: wish.enabled,
         clip_folder: out_dir().to_string_lossy().to_string(),
+        pipeline: pipeline_description(),
     }
 }
+
+/// The cheapest pipeline that works on this machine, found once per launcher
+/// run by trying each for a moment - the only reliable way to know, since an
+/// encoder can be compiled into FFmpeg and still have no card to run on.
+static CHOSEN: std::sync::OnceLock<Pipeline> = std::sync::OnceLock::new();
+
+fn pipeline() -> Pipeline {
+    *CHOSEN.get_or_init(|| {
+        if host_platform() != Platform::Windows {
+            return Pipeline::default();
+        }
+        let Some(ffmpeg) = ffmpeg_path() else { return Pipeline::default() };
+
+        let order = [
+            (Capture::Duplication, Encoder::Nvenc),
+            (Capture::Duplication, Encoder::Amf),
+            (Capture::Duplication, Encoder::Qsv),
+            (Capture::Gdi, Encoder::Nvenc),
+            (Capture::Gdi, Encoder::Amf),
+            (Capture::Gdi, Encoder::Qsv),
+            (Capture::Duplication, Encoder::X264),
+        ];
+        for (capture, encoder) in order {
+            let mut args: Vec<String> = vec!["-hide_banner".into(), "-loglevel".into(), "error".into()];
+            args.extend(video_input(Platform::Windows, capture, 30));
+            args.extend(["-t".into(), "1".into()]);
+            args.extend(encoder_args(encoder, 23, 30));
+            args.extend(["-f".into(), "null".into(), "-".into()]);
+
+            let mut command = Command::new(&ffmpeg);
+            command.args(&args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+            quiet(&mut command, false);
+            let worked = command.status().map(|s| s.success()).unwrap_or(false);
+            if worked {
+                return Pipeline { capture, encoder };
+            }
+        }
+        Pipeline::default()
+    })
+}
+
+/// Which pipeline is in use, for the status line - without triggering the
+/// probe if it has not run yet.
+pub fn pipeline_description() -> String {
+    CHOSEN.get().map(|p| p.describe()).unwrap_or_default()
+}
+
+/// No console window, and on request a lower priority than the game.
+///
+/// Below normal is what keeps the recorder from ever competing with the game
+/// for the CPU: when both want a core, the game gets it, and the recorder
+/// catches up in the gaps - which it can, a two second segment is a long time.
+#[allow(unused_variables)]
+fn quiet(command: &mut Command, below_normal: bool) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+        let mut flags = CREATE_NO_WINDOW;
+        if below_normal {
+            flags |= BELOW_NORMAL_PRIORITY_CLASS;
+        }
+        command.creation_flags(flags);
+    }
+}
+
+/// When the recorder last started, and how many times in a row it died soon
+/// after - so a recorder that cannot run is not restarted every second.
+static LAST_START: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+static QUICK_DEATHS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 pub fn start() -> Result<(), String> {
     ensure_dirs();
@@ -865,15 +1070,22 @@ pub fn start() -> Result<(), String> {
     }
 
     let inputs = resolve_inputs(&capture, &list_devices());
-    let args = record_args(host_platform(), &capture, &inputs, seconds, &buffer_dir());
+    let args = record_args_with(host_platform(), &capture, &inputs, seconds, &buffer_dir(), pipeline());
 
-    let child = Command::new(ffmpeg)
+    let mut command = Command::new(ffmpeg);
+    command
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    quiet(&mut command, true);
+    let child = command
         .spawn()
         .map_err(|e| format!("could not start the recorder: {e}"))?;
+
+    if let Ok(mut last) = LAST_START.lock() {
+        *last = Some(std::time::Instant::now());
+    }
 
     if let Ok(mut slot) = RECORDER.lock() {
         *slot = Some(child);
@@ -907,18 +1119,46 @@ pub fn tend() {
         };
         match slot.as_mut() {
             Some(child) => match child.try_wait() {
-                Ok(Some(_)) => { *slot = None; false }
+                Ok(Some(_)) => { *slot = None; note_death(); false }
                 Ok(None) => true,
-                Err(_) => { *slot = None; false }
+                Err(_) => { *slot = None; note_death(); false }
             },
             None => false,
         }
     };
 
     if wanted && !alive {
+        // A recorder that keeps dying straight away - a device that went, a
+        // driver that refuses - used to be restarted on every pass, and each
+        // start lists the audio devices and clears the ring first. Waiting
+        // longer after each quick death stops that churn from costing the
+        // game frames for nothing.
+        let deaths = QUICK_DEATHS.load(std::sync::atomic::Ordering::Relaxed);
+        if deaths > 0 {
+            let wait = std::time::Duration::from_secs((5u64 << deaths.min(6)).min(300));
+            let since = LAST_START.lock().ok().and_then(|l| *l).map(|t| t.elapsed());
+            if since.map(|s| s < wait).unwrap_or(false) {
+                return;
+            }
+        }
         let _ = start();
     } else if !wanted && alive {
         stop();
+    }
+}
+
+/// Counts a recorder that died within ten seconds of starting.
+fn note_death() {
+    let quick = LAST_START
+        .lock()
+        .ok()
+        .and_then(|l| *l)
+        .map(|t| t.elapsed() < std::time::Duration::from_secs(10))
+        .unwrap_or(false);
+    if quick {
+        QUICK_DEATHS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    } else {
+        QUICK_DEATHS.store(0, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -1037,6 +1277,34 @@ mod tests {
 
         let time = args.iter().position(|a| a == "-segment_time").unwrap();
         assert_eq!(args[time + 1], "2");
+    }
+
+    #[test]
+    fn card_encoders_get_their_own_arguments_and_keep_the_keyframes() {
+        for (encoder, name) in [(Encoder::Nvenc, "h264_nvenc"), (Encoder::Amf, "h264_amf"),
+                                (Encoder::Qsv, "h264_qsv"), (Encoder::X264, "libx264")] {
+            let args = record_args_with(
+                Platform::Windows, &settings(), &Inputs::default(), 30, Path::new("/b"),
+                Pipeline { capture: Capture::Duplication, encoder },
+            );
+            let codec = args.iter().position(|a| a == "-c:v").unwrap();
+            assert_eq!(args[codec + 1], name);
+            let g = args.iter().position(|a| a == "-g").unwrap();
+            assert_eq!(args[g + 1], "120");
+            assert!(args.iter().any(|a| a.starts_with("expr:gte(t,n_forced*2)")));
+            // x264-only options must not reach a card encoder, which would
+            // refuse to start over them
+            if encoder != Encoder::X264 {
+                assert!(!args.iter().any(|a| a == "-sc_threshold" || a == "-crf"), "{name}: {args:?}");
+            }
+            let input = args.iter().position(|a| a == "-i").unwrap();
+            assert!(args[input + 1].starts_with("ddagrab="), "{:?}", args[input + 1]);
+        }
+    }
+
+    #[test]
+    fn new_settings_record_at_thirty() {
+        assert_eq!(CaptureSettings::default().fps, 30);
     }
 
     #[test]
