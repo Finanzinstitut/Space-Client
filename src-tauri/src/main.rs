@@ -228,14 +228,35 @@ async fn start_login() -> Result<DeviceCodeInfo, String> {
     auth::start_device_login().await.map_err(|e| e.to_string())
 }
 
+/// What a finished sign-in hands back: the account, and whether it was new.
+///
+/// The second half is the whole point. Microsoft's code page signs in with
+/// whichever account the browser is already logged into, so "add another
+/// account" very often comes back with the same one - and without saying so,
+/// that looks exactly like the launcher refusing to hold more than one.
+#[derive(Serialize)]
+struct LoginOutcome {
+    #[serde(flatten)]
+    account: AccountInfo,
+    already_signed_in: bool,
+    total: usize,
+}
+
 #[tauri::command]
-async fn complete_login(info: DeviceCodeInfo) -> Result<AccountInfo, String> {
+async fn complete_login(info: DeviceCodeInfo) -> Result<LoginOutcome, String> {
+    let before = AccountStore::load();
     let account = auth::poll_device_login(info).await.map_err(|e| e.to_string())?;
-    Ok(AccountInfo {
-        username: account.username,
-        uuid: account.uuid,
-        offline: account.offline,
-        active: true,
+    let already_signed_in = auth::already_known(&before, &account.uuid);
+
+    Ok(LoginOutcome {
+        account: AccountInfo {
+            username: account.username,
+            uuid: account.uuid,
+            offline: account.offline,
+            active: true,
+        },
+        already_signed_in,
+        total: AccountStore::load().accounts.len(),
     })
 }
 
@@ -312,8 +333,21 @@ async fn set_cape(cape_id: String) -> Result<SkinProfile, String> {
 }
 
 #[tauri::command]
-async fn logout() -> Result<(), String> {
-    Account::clear().map_err(|e| e.to_string())
+async fn logout() -> Result<Option<AccountInfo>, String> {
+    // Only the account in use, not every account. This used to wipe the whole
+    // list, which made "sign out, then sign in with the other one" - the thing
+    // anybody would try first - lose the first account every time.
+    let mut store = AccountStore::load();
+    let active = store.active_uuid.clone();
+    store.remove(&active);
+    store.save().map_err(|e| e.to_string())?;
+
+    Ok(store.active().map(|a| AccountInfo {
+        username: a.username,
+        uuid: a.uuid,
+        offline: a.offline,
+        active: true,
+    }))
 }
 
 // ---------------- versions & loaders ----------------

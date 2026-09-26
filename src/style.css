@@ -1015,6 +1015,23 @@ input[type="checkbox"]:checked::after {
 
 .account-list { display: flex; flex-direction: column; gap: 8px; }
 
+/* Both headings in the account card - the list of accounts and the block for
+   adding another - look like every other section heading in the launcher.
+   They were bare labels, and a bare label here is inline body text that
+   happens to sit above a list. */
+.account-list > label,
+#account-signed-out > .section-label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-off);
+  margin-bottom: 4px;
+}
+
+#account-signed-out > .section-label { margin: 22px 0 10px; }
+#account-list:not(:empty) { margin-bottom: 18px; }
+
 .account-row {
   display: flex;
   align-items: center;

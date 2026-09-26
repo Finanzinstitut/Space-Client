@@ -458,6 +458,7 @@ function renderAccountList() {
       if (!confirm(t("confirm_remove_account", { name: entry.username }))) return;
       account = await invoke("remove_account", { uuid: entry.uuid });
       skinProfile = null;
+      setStatus("account-status", "");
       await refreshAccounts();
       renderAccount();
       loadSkinProfile();
@@ -1424,9 +1425,17 @@ $("btn-confirm-create").addEventListener("click", async () => {
 function renderAccount() {
   renderHome();
   refreshHomeSkin();
+  // Der Hinzufuegen-Block bleibt immer stehen. Er wurde versteckt, sobald ein
+  // Konto angemeldet war - und damit gab es keinen Knopf mehr fuer ein
+  // zweites. Mit Konto heisst er nur anders.
+  const hasAny = Boolean(account) || accounts.length > 0;
+  $("account-signed-out").classList.remove("hidden");
+  $("add-account-title").classList.toggle("hidden", !hasAny);
+  $("btn-signin").textContent = t(hasAny ? "btn_add_microsoft" : "btn_signin");
+  $("btn-signout").textContent = t("btn_signout_this");
+
   if (account) {
     $("account-signed-in").classList.remove("hidden");
-    $("account-signed-out").classList.add("hidden");
     $("account-username").textContent = account.username;
     $("account-name").textContent = account.username;
     introGreeting(account.username);
@@ -1446,7 +1455,6 @@ function renderAccount() {
     }
   } else {
     $("account-signed-in").classList.add("hidden");
-    $("account-signed-out").classList.remove("hidden");
     $("account-name").textContent = t("not_signed_in");
     introGreeting(null);
     $("account-dot").classList.remove("online", "offline");
@@ -1463,15 +1471,27 @@ $("btn-signin").addEventListener("click", async () => {
     $("login-flow").classList.remove("hidden");
     $("account-signed-out").classList.add("hidden");
 
+    // Vorher gesagt statt hinterher: wer schon ein Konto hat, landet sonst
+    // beim selben wieder, weil Microsoft das Konto des Browsers nimmt
+    $("login-private-hint").classList.toggle("hidden", accounts.length === 0);
+
     // Opens the browser right away so the user only has to paste the code
     shell.open(pendingLogin.verification_uri).catch(() => {});
 
-    account = await invoke("complete_login", { info: pendingLogin });
+    const outcome = await invoke("complete_login", { info: pendingLogin });
+    account = outcome;
     $("login-flow").classList.add("hidden");
+    await refreshAccounts();
     renderAccount();
-    refreshAccounts();
+    skinProfile = null;
     loadSkinProfile();
-    setStatus("account-status", t("login_success"), "success");
+
+    if (outcome.already_signed_in) {
+      setStatus("account-status", t("login_same_account", { name: outcome.username }), "warn");
+    } else {
+      setStatus("account-status",
+        t("login_added", { name: outcome.username, count: outcome.total }), "success");
+    }
   } catch (e) {
     $("login-flow").classList.add("hidden");
     $("account-signed-out").classList.remove("hidden");
@@ -1484,6 +1504,8 @@ $("btn-offline-login").addEventListener("click", async () => {
   setStatus("account-status", "");
   try {
     account = await invoke("login_offline", { username: name });
+    $("offline-username").value = "";
+    await refreshAccounts();
     renderAccount();
     setStatus("account-status", t("login_success"), "success");
   } catch (e) {
@@ -1508,11 +1530,25 @@ $("btn-copy-code").addEventListener("click", async () => {
 });
 
 $("btn-signout").addEventListener("click", async () => {
-  await invoke("logout");
-  account = null;
+  // Nur das Konto, das gerade benutzt wird. Frueher wurden hier alle
+  // geloescht - "abmelden und mit dem anderen anmelden" hat so jedes Mal das
+  // erste Konto gekostet.
+  account = await invoke("logout");
   skinProfile = null;
+  // Die letzte Meldung zaehlte noch die Konten von vorher
+  setStatus("account-status", "");
+  await refreshAccounts();
   renderAccount();
   renderSkinView();
+  if (account) loadSkinProfile();
+});
+
+$("btn-copy-url").addEventListener("click", async () => {
+  if (!pendingLogin) return;
+  try {
+    await navigator.clipboard.writeText(pendingLogin.verification_uri);
+    setStatus("account-status", t("link_copied"), "success");
+  } catch {}
 });
 
 

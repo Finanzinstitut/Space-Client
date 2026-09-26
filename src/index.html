@@ -460,22 +460,6 @@
         <p class="subtitle" data-i18n="account_sub"></p>
 
         <div class="card">
-          <div id="account-signed-out">
-            <button id="btn-signin" class="btn primary" data-i18n="btn_signin"></button>
-            <p class="hint" data-i18n="ms_blocked_note"></p>
-
-            <div class="divider"><span data-i18n="or_divider"></span></div>
-
-            <div class="offline-box">
-              <strong data-i18n="offline_title"></strong>
-              <p class="hint" data-i18n="offline_hint"></p>
-              <div class="row">
-                <input id="offline-username" type="text" data-i18n-ph="offline_username" class="grow" />
-                <button id="btn-offline-login" class="btn secondary small" data-i18n="btn_offline_login"></button>
-              </div>
-            </div>
-          </div>
-
           <div id="account-list" class="account-list"></div>
 
           <div id="account-signed-in" class="hidden">
@@ -490,17 +474,35 @@
             <button id="btn-signout" class="btn secondary" data-i18n="btn_signout"></button>
           </div>
 
+          <div id="account-signed-out">
+            <label id="add-account-title" class="section-label hidden" data-i18n="add_account_title"></label>
+            <button id="btn-signin" class="btn primary" data-i18n="btn_signin"></button>
+
+            <div class="divider"><span data-i18n="or_divider"></span></div>
+
+            <div class="offline-box">
+              <strong data-i18n="offline_title"></strong>
+              <p class="hint" data-i18n="offline_hint"></p>
+              <div class="row">
+                <input id="offline-username" type="text" data-i18n-ph="offline_username" class="grow" />
+                <button id="btn-offline-login" class="btn secondary small" data-i18n="btn_offline_login"></button>
+              </div>
+            </div>
+          </div>
+
           <div id="login-flow" class="hidden login-flow">
             <p data-i18n="login_step1"></p>
             <div class="row">
               <code id="login-url" class="code-box"></code>
               <button id="btn-open-browser" class="btn secondary small" data-i18n="btn_open_browser"></button>
+              <button id="btn-copy-url" class="btn secondary small" data-i18n="btn_copy_link"></button>
             </div>
             <p data-i18n="login_step2"></p>
             <div class="row">
               <code id="login-code" class="code-box big"></code>
               <button id="btn-copy-code" class="btn secondary small" data-i18n="btn_copy"></button>
             </div>
+            <p id="login-private-hint" class="warning-box hidden" data-i18n="login_private_hint"></p>
             <p class="waiting" data-i18n="login_waiting"></p>
           </div>
 
