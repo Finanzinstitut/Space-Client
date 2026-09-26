@@ -3327,7 +3327,10 @@ async function refreshClips(reloadList = true) {
   // beschreibt beide Quellen, und unter "Mikrofon aufnehmen" las sie sich, als
   // ginge es nur um das Mikrofon.
   const sound = t("clips_audio_" + (clipStatus.audio_state || "none"));
-  $("clips-state").textContent = clipStateText(clipStatus, clipSettings) + " " + sound;
+  // Which way the screen is recorded, once the recorder has chosen: a
+  // graphics card encoder costs the game next to nothing, the CPU one does not
+  const via = clipStatus.pipeline ? " " + t("clips_pipeline", { p: clipStatus.pipeline }) : "";
+  $("clips-state").textContent = clipStateText(clipStatus, clipSettings) + " " + sound + via;
   $("clips-audio-note").textContent = t("clips_mic_hint");
 
   await fillClipDevices();
