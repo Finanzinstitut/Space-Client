@@ -760,6 +760,16 @@ export function createSkinViewer(canvas, options = {}) {
   const onResize = () => schedule();
   window.addEventListener("resize", onResize);
 
+  // The window is not the only thing that changes the canvas's size: the view
+  // it sits in is laid out after start-up and shown and hidden by the tabs.
+  // Watching the canvas itself redraws it at the right size the moment it
+  // gets one, instead of whenever something else happens to ask for a frame.
+  let observer = null;
+  if (typeof ResizeObserver !== "undefined") {
+    observer = new ResizeObserver(() => schedule());
+    observer.observe(canvas);
+  }
+
   return {
     /**
      * Points the viewer at a skin, and optionally at the cape that is active.
@@ -836,6 +846,7 @@ export function createSkinViewer(canvas, options = {}) {
 
     destroy() {
       window.removeEventListener("resize", onResize);
+      if (observer) observer.disconnect();
       document.removeEventListener("visibilitychange", wake);
       window.removeEventListener("focus", wake);
       if (state.frame !== null) cancelAnimationFrame(state.frame);
