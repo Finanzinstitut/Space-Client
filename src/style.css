@@ -359,7 +359,12 @@ h2 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
   /* A pool of light under the figure, so it stands on something */
   background: radial-gradient(ellipse at 50% 82%, rgba(255, 255, 255, 0.05), transparent 52%);
 }
-.hero-figure canvas { max-width: 100%; max-height: 100%; }
+/* Sized by the box, not by its own pixel count. With only max-width and
+   max-height the canvas took its size from whatever resolution the first
+   draw happened to give it - and that depended on whether the page was laid
+   out yet, so on some starts the figure came up small and stayed small until
+   switching tabs redrew it. */
+.hero-figure canvas { width: 100%; height: 100%; display: block; }
 
 .hero-main { flex: 1; min-width: 0; }
 
