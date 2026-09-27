@@ -134,12 +134,13 @@ fn find_suspects(instance_id: &str, log: &str) -> Vec<Suspect> {
 /// is the fallback for the cases with no crash report at all - a silent exit,
 /// or a failure early enough that nothing got written.
 fn pick_log(dir: &Path) -> Result<(PathBuf, String)> {
-    let crash_dir = dir.join(".minecraft").join("crash-reports");
-    if let Ok(entries) = std::fs::read_dir(&crash_dir) {
-        let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    let mut consider = |folder: PathBuf, wanted: &dyn Fn(&str) -> bool| {
+        let Ok(entries) = std::fs::read_dir(&folder) else { return };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("txt") {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !wanted(name) {
                 continue;
             }
             let modified = entry.metadata().and_then(|m| m.modified()).ok();
@@ -149,6 +150,33 @@ fn pick_log(dir: &Path) -> Result<(PathBuf, String)> {
                 }
             }
         }
+    };
+
+    // The game's own crash reports
+    consider(dir.join(".minecraft").join("crash-reports"), &|n| n.ends_with(".txt"));
+
+    // And the ones the game never got to write. When the crash is below
+    // Java - the graphics driver falling over when the window is minimised,
+    // say - there is no crash report at all, only the JVM's hs_err file in the
+    // working directory. Without looking for it, the analysis picked up some
+    // older, unrelated crash report and explained the wrong crash.
+    let native = |n: &str| n.starts_with("hs_err_pid") && n.ends_with(".log");
+    consider(dir.join(".minecraft"), &native);
+    consider(dir.to_path_buf(), &native);
+
+    // A crash file from before this game session describes some other crash.
+    // latest.log is created when the game starts, so anything older than that
+    // is left alone and the launch log explains this one instead.
+    let session_start = std::fs::metadata(dir.join(".minecraft").join("logs").join("latest.log"))
+        .ok()
+        .and_then(|m| m.created().ok());
+    if let (Some((time, _)), Some(start)) = (&newest, session_start) {
+        if *time < start {
+            newest = None;
+        }
+    }
+
+    {
         if let Some((_, path)) = newest {
             let name = path
                 .file_name()
