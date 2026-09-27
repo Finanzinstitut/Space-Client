@@ -20,7 +20,8 @@ pub struct UpdateInfo {
     pub latest_version: String,
     pub release_url: String,
     pub notes: String,
-    /// What actually happened: "current", "available", "offline", "none".
+    /// What actually happened: "current", "available", "uploading", "offline",
+    /// "none".
     ///
     /// Every failure used to come back as update_available = false, which on
     /// screen is indistinguishable from "you have the newest one". A launcher
@@ -105,15 +106,29 @@ pub async fn check_for_update() -> UpdateInfo {
         .collect::<String>();
 
     let newer = is_newer(&tag, CURRENT_VERSION);
+
+    // A release is published by whichever build finishes first, and the other
+    // platform's files arrive a minute or so later. Offering the update in
+    // that minute meant "Update & restart" found no installer and failed. So
+    // the banner waits until this platform's installer is actually attached.
+    let assets = json.get("assets").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+    let ready = !cfg!(windows) || installer_asset(&assets).is_some();
+
     UpdateInfo {
-        update_available: newer,
+        update_available: newer && ready,
         current_version: CURRENT_VERSION.to_string(),
         // Tags in this repository have been written both ways - "v1.2.0" and
         // "v.1.1.0" - so the separator goes with the v rather than only the v.
         latest_version: tag.trim_start_matches('v').trim_start_matches('.').to_string(),
         release_url: html_url,
         notes,
-        status: if newer { "available".into() } else { "current".into() },
+        status: if newer && ready {
+            "available".into()
+        } else if newer {
+            "uploading".into()
+        } else {
+            "current".into()
+        },
     }
 }
 
@@ -137,31 +152,11 @@ pub async fn download_update(app: &AppHandle) -> anyhow::Result<String> {
         .and_then(|a| a.as_array())
         .ok_or_else(|| anyhow::anyhow!("That release lists no files to download"))?;
 
-    // Setup installers only. A release can also carry the plain executable and
-    // the updater bundle, and running the wrong one either does nothing useful
-    // or leaves the old version in place.
-    let asset = assets
-        .iter()
-        .find(|a| {
-            a.get("name")
-                .and_then(|n| n.as_str())
-                .map(|n| {
-                    let lower = n.to_lowercase();
-                    lower.ends_with(".exe") && lower.contains("setup")
-                })
-                .unwrap_or(false)
-        })
-        .or_else(|| {
-            assets.iter().find(|a| {
-                a.get("name")
-                    .and_then(|n| n.as_str())
-                    .map(|n| n.to_lowercase().ends_with(".exe"))
-                    .unwrap_or(false)
-            })
-        })
-        .ok_or_else(|| {
-            anyhow::anyhow!("That release has no Windows installer attached")
-        })?;
+    let asset = installer_asset(assets).ok_or_else(|| {
+        anyhow::anyhow!(
+            "The installer for this version is still being uploaded - try again in a minute"
+        )
+    })?;
 
     let name = asset
         .get("name")
@@ -212,6 +207,30 @@ pub async fn download_update(app: &AppHandle) -> anyhow::Result<String> {
     *staged().lock().unwrap() = Some(target.clone());
 
     Ok(target.to_string_lossy().to_string())
+}
+
+/// The Windows setup installer among a release's files.
+///
+/// Setup installers only. A release can also carry the plain executable and
+/// the updater bundle, and running the wrong one either does nothing useful
+/// or leaves the old version in place.
+fn installer_asset(assets: &[serde_json::Value]) -> Option<&serde_json::Value> {
+    let name_of = |a: &serde_json::Value| {
+        a.get("name").and_then(|n| n.as_str()).map(|n| n.to_lowercase()).unwrap_or_default()
+    };
+    // Only files GitHub reports as finished: one still uploading is listed
+    // too, and downloading it gets half a file
+    let finished = |a: &&serde_json::Value| {
+        a.get("state").and_then(|s| s.as_str()).map(|s| s == "uploaded").unwrap_or(true)
+    };
+    assets
+        .iter()
+        .filter(finished)
+        .find(|a| {
+            let n = name_of(a);
+            n.ends_with(".exe") && n.contains("setup")
+        })
+        .or_else(|| assets.iter().filter(finished).find(|a| name_of(a).ends_with(".exe")))
 }
 
 /// The installer this process downloaded and checked, if any.
@@ -340,4 +359,25 @@ pub fn run_installer() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Could not start the installer: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_release_without_the_windows_installer_is_not_ready() {
+        let linux_only: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[{"name":"Space.Client_1.16.0_amd64.deb","state":"uploaded"}]"#).unwrap();
+        assert!(installer_asset(&linux_only).is_none());
+
+        let uploading: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[{"name":"Space.Client_1.16.0_x64-setup.exe","state":"new"}]"#).unwrap();
+        assert!(installer_asset(&uploading).is_none());
+
+        let complete: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[{"name":"Space.Client_1.16.0_x64_en-US.msi","state":"uploaded"},
+                {"name":"Space.Client_1.16.0_x64-setup.exe","state":"uploaded"}]"#).unwrap();
+        assert_eq!(installer_asset(&complete).unwrap()["name"], "Space.Client_1.16.0_x64-setup.exe");
+    }
 }

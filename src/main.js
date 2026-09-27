@@ -2259,6 +2259,10 @@ async function checkUpdate() {
     setStatus("update-status", t("update_status_" + (info.status || "current"), {
       v: info.latest_version,
     }), info.status === "offline" ? "error" : "");
+
+    // A release whose installer is still uploading is looked at again
+    // shortly, so the banner turns up by itself once it can actually work
+    if (info.status === "uploading") setTimeout(checkUpdate, 60000);
   } catch {
     // A failed check must never block playing - but it must not look like
     // good news either.
@@ -2316,7 +2320,10 @@ async function installUpdate(info) {
   } catch (e) {
     $("update-bar").classList.add("hidden");
     if (text) text.textContent = t("update_failed") + " " + String(e);
-    if (info && info.release_url) {
+    // Not yet uploaded is a wait, not a failure: pressing again in a minute
+    // works, and sending people to GitHub to install by hand does not help
+    var waiting = String(e).indexOf("still being uploaded") >= 0;
+    if (!waiting && info && info.release_url) {
       shell.open(info.release_url).catch(function () {});
     }
     if (button) button.disabled = false;
