@@ -315,6 +315,7 @@ export const translations = {
     btn_close: "Close",
     btn_clear: "Clear",
     console_exited: "Game exited with code {code}.",
+    game_crashed: "The game crashed (code {code}). Open the instance's console and press \"Crash analysis\" - then send the link.",
     console_killed: "Instance stopped.",
     console_autoscroll: "Auto-scroll",
 
@@ -673,6 +674,7 @@ export const translations = {
     btn_close: "Schließen",
     btn_clear: "Leeren",
     console_exited: "Spiel beendet mit Code {code}.",
+    game_crashed: "Das Spiel ist abgest\u00fcrzt (Code {code}). \u00d6ffne die Konsole der Instanz und dr\u00fccke \u201eAbsturzanalyse\u201c - und schick den Link.",
     console_killed: "Instanz beendet.",
     console_autoscroll: "Auto-Scroll",
 

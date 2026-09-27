@@ -1064,6 +1064,20 @@ listen("game://log", (event) => {
   appendConsoleLine(p.line, p.error ? "err" : "");
 });
 
+/** Instances the player stopped with the kill button - that exit is no crash. */
+const killedByUser = new Set();
+
+// Said wherever you are, not only with the console open: a game that just
+// vanished - minimised, say, and never came back - otherwise leaves nothing
+// behind but a closed window and no idea what to send anyone.
+listen("game://exit", (event) => {
+  const p = event.payload;
+  const killed = killedByUser.delete(p.instance_id);
+  if (p.code != null && p.code !== 0 && !killed) {
+    setStatus("global-status", t("game_crashed", { code: p.code }), "error");
+  }
+});
+
 listen("game://exit", (event) => {
   const p = event.payload;
   if (!consoleInstanceId || p.instance_id !== consoleInstanceId) return;
@@ -1080,6 +1094,7 @@ $("btn-console-clear").addEventListener("click", () => {
 $("btn-console-kill").addEventListener("click", async () => {
   if (!consoleInstanceId) return;
   try {
+    killedByUser.add(consoleInstanceId);
     await invoke("kill_instance", { id: consoleInstanceId });
     appendConsoleLine(t("console_killed"), "info");
     $("btn-console-kill").disabled = true;
