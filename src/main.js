@@ -2367,6 +2367,7 @@ async function init() {
   $("curseforge-key").value = config.curseforge_key || "";
   $("backup-keep").value = config.backup_keep || 5;
   applyMotionPrefs();
+  applyEdition(config.edition === "bedrock" ? "bedrock" : "java");
 
   account = await invoke("get_account");
   renderAccount();
@@ -2889,6 +2890,101 @@ $("btn-play").addEventListener("click", () => {
 
 $("btn-toggle-import").addEventListener("click", () => {
   $("import-area").classList.toggle("hidden");
+});
+
+/* ===========================================================================
+ * Edition switch: Java or Bedrock
+ *
+ * Bedrock is a different home screen rather than a different play button. The
+ * switch stores the choice, swaps the two panels, and - on the way into
+ * Bedrock - asks the backend what it can see: whether the game is installed,
+ * which version, and whether our resource pack is already in its folder. The
+ * launcher never touches the running game here; it opens it and offers the
+ * pack, nothing more.
+ * ======================================================================== */
+let bedrockInfo = null;
+
+function applyEdition(edition) {
+  const bedrock = edition === "bedrock";
+  document.querySelectorAll(".edition-opt").forEach((b) =>
+    b.classList.toggle("active", (b.dataset.edition === "bedrock") === bedrock)
+  );
+  $("edition-java-panel").classList.toggle("hidden", bedrock);
+  $("edition-bedrock-panel").classList.toggle("hidden", !bedrock);
+  if (bedrock) refreshBedrock();
+}
+
+async function refreshBedrock() {
+  try {
+    bedrockInfo = await invoke("bedrock_info");
+  } catch {
+    bedrockInfo = { installed: false, version: "", pack_installed: false };
+  }
+  renderBedrock();
+}
+
+function renderBedrock() {
+  const info = bedrockInfo || { installed: false, version: "", pack_installed: false };
+  const meta = $("bedrock-meta");
+  meta.innerHTML = "";
+  const line = document.createElement("span");
+  line.className = "tag";
+  if (!info.installed) line.textContent = t("bedrock_missing");
+  else line.textContent = info.version
+    ? t("bedrock_found", { v: info.version })
+    : t("bedrock_found_nover");
+  meta.appendChild(line);
+
+  $("btn-play-bedrock").disabled = !info.installed;
+
+  // The pack card only makes sense once the game is there to receive it
+  $("bedrock-pack").classList.toggle("hidden", !info.installed);
+  const state = $("bedrock-pack-state");
+  state.textContent = info.pack_installed ? t("bedrock_pack_on") : t("bedrock_pack_off");
+  state.classList.toggle("on", !!info.pack_installed);
+  $("btn-bedrock-pack-install").classList.toggle("hidden", info.pack_installed);
+  $("btn-bedrock-pack-remove").classList.toggle("hidden", !info.pack_installed);
+}
+
+document.querySelectorAll(".edition-opt").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const edition = btn.dataset.edition;
+    applyEdition(edition);
+    try {
+      config = await invoke("set_edition", { edition });
+    } catch (e) {
+      setStatus("global-status", String(e), "error");
+    }
+  });
+});
+
+$("btn-play-bedrock").addEventListener("click", async () => {
+  setStatus("bedrock-pack-status", "");
+  try {
+    await invoke("launch_bedrock");
+  } catch (e) {
+    setStatus("bedrock-pack-status", String(e), "error");
+  }
+});
+
+$("btn-bedrock-pack-install").addEventListener("click", async () => {
+  try {
+    bedrockInfo = await invoke("install_bedrock_pack");
+    renderBedrock();
+    setStatus("bedrock-pack-status", t("bedrock_pack_installed_toast"), "success");
+  } catch (e) {
+    setStatus("bedrock-pack-status", String(e), "error");
+  }
+});
+
+$("btn-bedrock-pack-remove").addEventListener("click", async () => {
+  try {
+    bedrockInfo = await invoke("remove_bedrock_pack");
+    renderBedrock();
+    setStatus("bedrock-pack-status", t("bedrock_pack_removed_toast"), "success");
+  } catch (e) {
+    setStatus("bedrock-pack-status", String(e), "error");
+  }
 });
 
 /* ===========================================================================
