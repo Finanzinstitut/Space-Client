@@ -1,0 +1,18 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "§fSpace §7Client",
+    "description": "The Space Client look for Minecraft Bedrock. Recolours the menus and buttons to the dark Space Client theme.",
+    "uuid": "7a6e20cb-8a17-467d-98d4-8a25439a12a2",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 20, 0]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "description": "UI textures",
+      "uuid": "1951c0e5-5fff-4b85-a5ee-3bad543a9453",
+      "version": [1, 0, 0]
+    }
+  ]
+}

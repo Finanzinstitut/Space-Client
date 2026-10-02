@@ -1,5 +1,7 @@
 pub mod auth;
 pub mod backup;
+pub mod bedrock;
+pub mod bedrock_pack;
 pub mod bundles;
 pub mod clientmod;
 pub mod clips;

@@ -721,6 +721,47 @@ async fn launch_instance(
     Ok(())
 }
 
+// ---------------- Bedrock ----------------
+
+/// What the home screen shows in Bedrock mode: whether Bedrock is installed,
+/// its version, and whether our resource pack is in place.
+#[tauri::command]
+fn bedrock_info() -> launcher::bedrock::BedrockInfo {
+    launcher::bedrock::info(launcher::bedrock_pack::is_installed())
+}
+
+/// Switches the home screen between Java and Bedrock. Anything but "bedrock"
+/// is read as Java, so an unexpected value falls back to the safe default.
+#[tauri::command]
+async fn set_edition(edition: String, state: State<'_, AppState>) -> Result<LauncherConfig, String> {
+    let mut cfg = state.config.lock().unwrap();
+    cfg.edition = if edition == "bedrock" { "bedrock".into() } else { "java".into() };
+    cfg.save().map_err(|e| e.to_string())?;
+    Ok(cfg.clone())
+}
+
+/// Opens the installed Minecraft Bedrock. No instance, no account check and no
+/// process to watch: Windows owns the game's lifetime once the protocol hands
+/// it over, so there is nothing to put in the running list.
+#[tauri::command]
+fn launch_bedrock() -> Result<(), String> {
+    launcher::bedrock::launch()
+}
+
+/// Puts the Space Client resource pack into Bedrock's pack folder, then reports
+/// the refreshed state so the view can update in one round trip.
+#[tauri::command]
+fn install_bedrock_pack() -> Result<launcher::bedrock::BedrockInfo, String> {
+    launcher::bedrock_pack::install()?;
+    Ok(launcher::bedrock::info(launcher::bedrock_pack::is_installed()))
+}
+
+#[tauri::command]
+fn remove_bedrock_pack() -> Result<launcher::bedrock::BedrockInfo, String> {
+    launcher::bedrock_pack::uninstall()?;
+    Ok(launcher::bedrock::info(launcher::bedrock_pack::is_installed()))
+}
+
 #[tauri::command]
 async fn kill_instance(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut map = state.running.lock().unwrap();
@@ -1181,6 +1222,11 @@ fn main() {
             install_instance,
             update_client_mod,
             launch_instance,
+            bedrock_info,
+            set_edition,
+            launch_bedrock,
+            install_bedrock_pack,
+            remove_bedrock_pack,
             kill_instance,
             is_running,
             analyse_crash,

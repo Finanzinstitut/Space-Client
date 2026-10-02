@@ -74,6 +74,18 @@ pub struct LauncherConfig {
     /// is offered but says what it needs.
     #[serde(default)]
     pub curseforge_key: String,
+    /// Which edition the home screen plays: "java" or "bedrock".
+    ///
+    /// Java by default - it is what every instance, account check and mod in
+    /// this launcher is built around. Bedrock is a second mode the home screen
+    /// switches into: there the play button opens the installed Bedrock game,
+    /// and the only Space Client part that reaches it is the resource pack.
+    #[serde(default = "default_edition")]
+    pub edition: String,
+}
+
+fn default_edition() -> String {
+    "java".to_string()
 }
 
 fn default_keep() -> u32 {
@@ -106,6 +118,7 @@ impl Default for LauncherConfig {
             backup_keep: 5,
             auto_update_client_mod: true,
             curseforge_key: String::new(),
+            edition: default_edition(),
         }
     }
 }

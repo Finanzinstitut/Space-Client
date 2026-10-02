@@ -91,15 +91,53 @@
             <div class="hero-eyebrow" id="home-greeting"></div>
             <h1 class="hero-name" id="home-player">—</h1>
 
-            <label class="hero-label" data-i18n="home_playing"></label>
-            <select id="home-instance" class="hero-select"></select>
-            <div class="hero-meta" id="home-meta"></div>
+            <!--
+              Java or Bedrock. The two are different enough that the home screen
+              becomes a different screen under the switch rather than sharing
+              one play button: Java has instances, a mod and an account that
+              owns it; Bedrock has none of that from here - the launcher only
+              opens it and carries the look in as a resource pack.
+            -->
+            <div class="edition-switch" id="edition-switch">
+              <button class="edition-opt active" data-edition="java" data-i18n="edition_java"></button>
+              <button class="edition-opt" data-edition="bedrock" data-i18n="edition_bedrock"></button>
+            </div>
 
-            <button id="btn-play" class="play-btn">
-              <span class="play-glyph">▶</span>
-              <span data-i18n="btn_play"></span>
-            </button>
-            <div class="hero-note" id="home-note"></div>
+            <!-- JAVA -->
+            <div id="edition-java-panel">
+              <label class="hero-label" data-i18n="home_playing"></label>
+              <select id="home-instance" class="hero-select"></select>
+              <div class="hero-meta" id="home-meta"></div>
+
+              <button id="btn-play" class="play-btn">
+                <span class="play-glyph">▶</span>
+                <span data-i18n="btn_play"></span>
+              </button>
+              <div class="hero-note" id="home-note"></div>
+            </div>
+
+            <!-- BEDROCK -->
+            <div id="edition-bedrock-panel" class="hidden">
+              <div class="hero-meta" id="bedrock-meta"></div>
+              <button id="btn-play-bedrock" class="play-btn">
+                <span class="play-glyph">▶</span>
+                <span data-i18n="bedrock_play"></span>
+              </button>
+              <div class="hero-note" id="bedrock-note" data-i18n="bedrock_note"></div>
+
+              <div class="bedrock-pack" id="bedrock-pack">
+                <div class="bedrock-pack-head">
+                  <span class="bedrock-pack-title" data-i18n="bedrock_pack_title"></span>
+                  <span class="bedrock-pack-state" id="bedrock-pack-state"></span>
+                </div>
+                <p class="hint" data-i18n="bedrock_pack_desc"></p>
+                <div class="bedrock-pack-actions">
+                  <button id="btn-bedrock-pack-install" class="btn primary small" data-i18n="bedrock_pack_install"></button>
+                  <button id="btn-bedrock-pack-remove" class="btn secondary small" data-i18n="bedrock_pack_remove"></button>
+                </div>
+                <span id="bedrock-pack-status" class="status-line"></span>
+              </div>
+            </div>
           </div>
         </div>
 

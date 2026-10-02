@@ -1579,3 +1579,49 @@ input[type="checkbox"].switch:checked::before { content: none; }
   display: block;
   margin-bottom: 10px;
 }
+
+/* ===========================================================================
+ * Edition switch (Java / Bedrock) and the Bedrock home panel
+ * ======================================================================== */
+.edition-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 14px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+}
+.edition-opt {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  padding: 6px 18px;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-weight: 600;
+  transition: background 0.15s, color 0.15s;
+}
+.edition-opt:hover { color: var(--text); }
+.edition-opt.active { background: var(--accent); color: var(--on-accent); }
+
+.bedrock-pack {
+  margin-top: 18px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  max-width: 460px;
+}
+.bedrock-pack-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.bedrock-pack-title { font-weight: 700; }
+.bedrock-pack-state { font-size: 12px; color: var(--text-dim); }
+.bedrock-pack-state.on { color: var(--success); }
+.bedrock-pack-actions { display: flex; gap: 8px; margin-top: 12px; }
