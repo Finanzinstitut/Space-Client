@@ -1344,9 +1344,10 @@ $("new-snapshots").addEventListener("change", () => {
 });
 
 
-/// The HUD mod is a Fabric mod built against 26.2 only, so any other
-/// combination silently gets an instance without it. Say so up front.
-const HUD_MC_VERSION = "26.2";
+/// The HUD mod is a Fabric mod with builds for these release series. The
+/// launcher picks the build that matches the instance; any other version
+/// silently gets an instance without it, so say so up front.
+const HUD_MC_SERIES = ["26.2", "26.3"];
 const HUD_LOADERS = ["fabric", "quilt"];
 
 function updateHudCompatNote() {
@@ -1358,7 +1359,8 @@ function updateHudCompatNote() {
     return;
   }
 
-  const supported = version === HUD_MC_VERSION && HUD_LOADERS.includes(loader);
+  const inSeries = HUD_MC_SERIES.some((s) => version === s || version.startsWith(s + "."));
+  const supported = inSeries && HUD_LOADERS.includes(loader);
   note.textContent = supported ? t("hud_supported") : t("hud_unsupported");
   note.className = "compat-note " + (supported ? "ok" : "warn");
 }

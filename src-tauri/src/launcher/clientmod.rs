@@ -42,100 +42,185 @@ pub async fn install_client_mod(app: &AppHandle, instance: &Instance) -> anyhow:
     });
 
     let client = http()?;
-    let url = format!("https://api.github.com/repos/{}/releases/latest", MOD_REPO);
-    let resp = client.get(&url).send().await?;
 
-    if !resp.status().is_success() {
+    // Every release, newest first, rather than only the latest: the newest
+    // build is made for the newest Minecraft, and an instance on an older
+    // version needs the newest build that was made for *its* version. A 26.2
+    // instance keeps getting the last 26.2 build after the mod has moved on
+    // to 26.3, instead of getting nothing.
+    let releases = list_releases(&client).await?;
+    if releases.is_empty() {
         // No release published yet is a normal state early on, not an error
         // worth failing the whole instance install over.
         return Ok(None);
     }
 
-    let release: serde_json::Value = resp.json().await?;
-    let tag = release
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-
-    // Pick the mod jar, skipping the sources and dev jars Loom also produces.
     let mods_dir = instance.mods_dir();
     let dest = mods_dir.join(FILE_NAME);
+    let installed = installed_version(&dest);
 
-    // Already on this build. Checked before anything is downloaded, so pressing
-    // install on an instance that is current costs one small API call instead of
-    // a few megabytes and a rewritten file.
-    if let Some(existing) = installed_version(&dest) {
-        if existing == tag {
+    // Older releases name their jar without the Minecraft version, so the only
+    // way to know what they are for is to look inside. Capped, so a long run of
+    // releases for some other version cannot turn into a long run of downloads.
+    let mut unlabelled_checked = 0;
+    let mut skipped: Option<String> = None;
+
+    for release in &releases {
+        let Some(asset) = mod_asset(release) else { continue };
+        let version = release_version(release);
+
+        match asset.mc_version.as_deref() {
+            Some(mc) if !same_series(mc, &instance.mc_version) => {
+                // Labelled for another version: no download needed to know
+                skipped.get_or_insert(format!(
+                    "built for Minecraft {}, this instance is {}",
+                    mc, instance.mc_version
+                ));
+                continue;
+            }
+            _ => {}
+        }
+
+        // Already on this build. Checked before anything is downloaded, so an
+        // instance that is current costs one small API call, not a few
+        // megabytes and a rewritten file. The jar on disk was checked when it
+        // was put there, so its version alone is enough.
+        if installed.as_deref() == Some(version.as_str()) {
             emit_progress(app, InstallProgress {
                 stage: "clientmod".into(),
                 current: 1,
                 total: 1,
-                file: format!("Space Client mod {} already installed", tag),
+                file: format!("Space Client mod {} already installed", version),
             });
-            return Ok(Some(tag));
+            return Ok(Some(version));
         }
-    }
 
-    let asset_url = release
-        .get("assets")
-        .and_then(|a| a.as_array())
-        .and_then(|assets| {
-            assets.iter().find(|a| {
-                let name = a.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                name.ends_with(".jar")
-                    && !name.contains("sources")
-                    && !name.contains("dev")
-                    && !name.contains("shadow")
-            })
-        })
-        .and_then(|a| a.get("browser_download_url"))
-        .and_then(|u| u.as_str())
-        .map(String::from);
-
-    let Some(asset_url) = asset_url else {
-        return Ok(None);
-    };
-
-    fs::create_dir_all(&mods_dir).await?;
-
-    let bytes = client
-        .get(&asset_url)
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
-
-    // Checked against what the jar says about itself, not against its file
-    // name. A release can carry a build for a different Minecraft version, and
-    // a name is whatever somebody typed - fabric.mod.json is what the loader
-    // will actually read, so it is what decides here too.
-    match jar_fits(&bytes, instance) {
-        Fit::Yes => {}
-        Fit::No(reason) => {
-            emit_progress(app, InstallProgress {
-                stage: "clientmod".into(),
-                current: 1,
-                total: 1,
-                file: format!("Space Client mod skipped: {}", reason),
-            });
-            return Ok(None);
+        if asset.mc_version.is_none() {
+            if unlabelled_checked >= 3 {
+                continue;
+            }
+            unlabelled_checked += 1;
         }
-    }
 
-    let mut f = fs::File::create(&dest).await?;
-    f.write_all(&bytes).await?;
-    f.flush().await?;
+        let bytes = client
+            .get(&asset.url)
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await?;
+
+        // Checked against what the jar says about itself as well, even when
+        // the name carries a version: fabric.mod.json is what the loader will
+        // actually read, so it is what decides.
+        match jar_fits(&bytes, instance) {
+            Fit::Yes => {}
+            Fit::No(reason) => {
+                skipped.get_or_insert(reason);
+                continue;
+            }
+        }
+
+        fs::create_dir_all(&mods_dir).await?;
+        let mut f = fs::File::create(&dest).await?;
+        f.write_all(&bytes).await?;
+        f.flush().await?;
+
+        emit_progress(app, InstallProgress {
+            stage: "clientmod".into(),
+            current: 1,
+            total: 1,
+            file: format!("Space Client mod {} for Minecraft {}", version, instance.mc_version),
+        });
+        return Ok(Some(version));
+    }
 
     emit_progress(app, InstallProgress {
         stage: "clientmod".into(),
         current: 1,
         total: 1,
-        file: format!("Space Client mod {}", tag),
+        file: format!(
+            "Space Client mod skipped: {}",
+            skipped.unwrap_or_else(|| format!("no build for Minecraft {}", instance.mc_version))
+        ),
     });
+    Ok(None)
+}
 
-    Ok(Some(tag))
+/// Published releases, newest first, drafts and pre-releases left out.
+/// Up to three pages: far more history than any instance will reach back for.
+async fn list_releases(client: &reqwest::Client) -> anyhow::Result<Vec<serde_json::Value>> {
+    let mut out = Vec::new();
+    for page in 1..=3 {
+        let url = format!(
+            "https://api.github.com/repos/{}/releases?per_page=50&page={}",
+            MOD_REPO, page
+        );
+        let resp = client.get(&url).send().await?;
+        if !resp.status().is_success() {
+            break;
+        }
+        let batch: Vec<serde_json::Value> = resp.json().await?;
+        let done = batch.len() < 50;
+        out.extend(batch.into_iter().filter(|r| {
+            !r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false)
+                && !r.get("prerelease").and_then(|v| v.as_bool()).unwrap_or(false)
+        }));
+        if done {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// The mod jar of one release.
+struct ModAsset {
+    url: String,
+    /// From a name like spaceclient-1.47.0-mc26.3.jar; None on older releases
+    mc_version: Option<String>,
+}
+
+fn mod_asset(release: &serde_json::Value) -> Option<ModAsset> {
+    let assets = release.get("assets")?.as_array()?;
+    let asset = assets.iter().find(|a| {
+        let name = a.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        // Skipping the sources and dev jars Loom also produces
+        name.ends_with(".jar")
+            && !name.contains("sources")
+            && !name.contains("dev")
+            && !name.contains("shadow")
+    })?;
+    let name = asset.get("name")?.as_str()?;
+    Some(ModAsset {
+        url: asset.get("browser_download_url")?.as_str()?.to_string(),
+        mc_version: mc_from_name(name),
+    })
+}
+
+/// "spaceclient-1.47.0-mc26.3.jar" -> "26.3".
+fn mc_from_name(name: &str) -> Option<String> {
+    let stem = name.strip_suffix(".jar")?;
+    let at = stem.rfind("-mc")?;
+    let mc = &stem[at + 3..];
+    if !mc.is_empty() && mc.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        Some(mc.to_string())
+    } else {
+        None
+    }
+}
+
+/// The version the release's jar carries, from its tag: "v.1.47.0" -> "1.47.0".
+/// Compared with the version inside the installed jar, which has neither the
+/// v nor the dot.
+fn release_version(release: &serde_json::Value) -> String {
+    let tag = release.get("tag_name").and_then(|v| v.as_str()).unwrap_or("unknown");
+    tag.trim_start_matches('v').trim_start_matches('.').to_string()
+}
+
+/// Whether a build made for `built` runs on `instance`: the same release
+/// series, so a 26.3 build also covers 26.3.1, but not 26.2 or 26.4.
+fn same_series(built: &str, instance: &str) -> bool {
+    instance == built || instance.starts_with(&format!("{}.", built))
 }
 
 /// Whether a downloaded jar belongs in this instance.
@@ -328,4 +413,50 @@ pub fn remove_client_mod(instance: &Instance) -> anyhow::Result<()> {
         std::fs::remove_file(path)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_minecraft_version_from_the_name() {
+        assert_eq!(mc_from_name("spaceclient-1.47.0-mc26.3.jar").as_deref(), Some("26.3"));
+        assert_eq!(mc_from_name("spaceclient-2.0.0-mc26.3.1.jar").as_deref(), Some("26.3.1"));
+        // Releases from before the name carried it
+        assert_eq!(mc_from_name("spaceclient-1.46.0.jar"), None);
+        assert_eq!(mc_from_name("spaceclient-1.46.0-mcbeta.jar"), None);
+    }
+
+    #[test]
+    fn release_version_drops_the_tag_prefix() {
+        let release = serde_json::json!({ "tag_name": "v.1.47.0" });
+        assert_eq!(release_version(&release), "1.47.0");
+        let release = serde_json::json!({ "tag_name": "v1.2.3" });
+        assert_eq!(release_version(&release), "1.2.3");
+    }
+
+    #[test]
+    fn a_build_covers_its_own_series_only() {
+        assert!(same_series("26.3", "26.3"));
+        assert!(same_series("26.3", "26.3.1"));
+        assert!(!same_series("26.3", "26.2"));
+        assert!(!same_series("26.3", "26.4"));
+        assert!(!same_series("26.3", "26.31"));
+        assert!(same_series("26.2", "26.2"));
+    }
+
+    #[test]
+    fn picks_the_jar_and_its_version() {
+        let release = serde_json::json!({
+            "tag_name": "v.1.47.0",
+            "assets": [
+                { "name": "spaceclient-1.47.0-sources.jar", "browser_download_url": "https://x/sources" },
+                { "name": "spaceclient-1.47.0-mc26.3.jar", "browser_download_url": "https://x/mod" }
+            ]
+        });
+        let asset = mod_asset(&release).unwrap();
+        assert_eq!(asset.url, "https://x/mod");
+        assert_eq!(asset.mc_version.as_deref(), Some("26.3"));
+    }
 }
