@@ -496,7 +496,19 @@ async fn install_instance(
     state: State<'_, AppState>,
 ) -> Result<Instance, String> {
     let cfg = state.config.lock().unwrap().clone();
-    let mut inst = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
+    install_instance_with(&app, &cfg, &id).await
+}
+
+/// Everything install_instance does, callable from other commands - the
+/// version switch below installs the new version through exactly this.
+async fn install_instance_with(
+    app: &tauri::AppHandle,
+    cfg: &LauncherConfig,
+    id: &str,
+) -> Result<Instance, String> {
+    let app = app.clone();
+    let cfg = cfg.clone();
+    let mut inst = instance::get(id).ok_or_else(|| "Instance not found".to_string())?;
 
     // 1. vanilla base (client jar, libraries, assets, java)
     launcher::download::install_version(app.clone(), cfg.clone(), inst.mc_version.clone())
@@ -567,6 +579,103 @@ async fn install_instance(
     launcher::clientmod::install_extras(&app, &inst, false).await;
 
     Ok(inst)
+}
+
+#[derive(serde::Serialize)]
+struct VersionChange {
+    instance: Instance,
+    /// How many worlds were backed up before anything changed
+    backed_up: usize,
+    mods: launcher::mods::MigrationReport,
+}
+
+/// Moves an instance to another Minecraft version and keeps everything in it.
+///
+/// Worlds, settings, resource packs, shaders, screenshots and the mods folder
+/// all stay where they are: the instance's folder is not touched, only what it
+/// launches. In order:
+///
+/// 1. Every world is backed up first. A world opened in a newer version cannot
+///    be opened in the older one again, so this is the way back.
+/// 2. The new version and a loader for it are installed. If that fails the
+///    instance goes back to the version it had, untouched.
+/// 3. Mods are moved onto their builds for the new version; any without one is
+///    parked in mods/incompatible instead of deleted.
+/// 4. The Space Client mod for the new version goes in through the usual path.
+#[tauri::command]
+async fn change_instance_version(
+    app: tauri::AppHandle,
+    id: String,
+    mc_version: String,
+    state: State<'_, AppState>,
+) -> Result<VersionChange, String> {
+    if state.running.lock().unwrap().contains_key(&id) {
+        return Err("Close the game first - the version cannot change while it is running.".into());
+    }
+    let cfg = state.config.lock().unwrap().clone();
+    let before = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
+    let mc_version = mc_version.trim().to_string();
+    if mc_version.is_empty() {
+        return Err("Pick a Minecraft version.".into());
+    }
+    if mc_version == before.mc_version {
+        return Err(format!("This instance is already on Minecraft {}.", mc_version));
+    }
+
+    // Asked before anything is changed: switching to a version the loader does
+    // not support yet would leave an instance that cannot start
+    if before.loader != "vanilla" {
+        let available = loader::list_versions_for(&before.loader, &mc_version)
+            .await
+            .map_err(|e| e.to_string())?;
+        if available.is_empty() {
+            return Err(format!(
+                "{} is not available for Minecraft {} yet, so the instance stays on {}.",
+                before.loader, mc_version, before.mc_version
+            ));
+        }
+    }
+
+    // 1. worlds first
+    let backups = launcher::backup::run_all(&id, cfg.backup_keep.max(1) as usize + 1);
+    // Without its backup a world opened in the new version has no way back,
+    // so a failed one stops the change before anything has been touched
+    if !backups.skipped.is_empty() {
+        return Err(format!(
+            "A world could not be backed up, so nothing was changed: {}",
+            backups.skipped.join("; ")
+        ));
+    }
+    let backed_up = backups.made.len();
+
+    // 2. the new version
+    let mut switched = before.clone();
+    switched.mc_version = mc_version.clone();
+    switched.loader_version = String::new();
+    switched.version_id = String::new();
+    instance::upsert(switched).map_err(|e| e.to_string())?;
+
+    let installed = match install_instance_with(&app, &cfg, &id).await {
+        Ok(inst) => inst,
+        Err(e) => {
+            // Back to how it was: the old version's files are still in the
+            // shared cache, so the old record launches as before
+            instance::upsert(before.clone()).ok();
+            return Err(format!("Minecraft {} could not be installed, the instance stays on {}: {}",
+                mc_version, before.mc_version, e));
+        }
+    };
+
+    // 3. mods
+    let mods = launcher::mods::migrate_mods(&app, &installed)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // 4. the Space Client mod for this version (install_instance_with already
+    // asked once; asking again after the mods folder settled is harmless)
+    launcher::clientmod::install_extras(&app, &installed, false).await;
+
+    Ok(VersionChange { instance: installed, backed_up, mods })
 }
 
 /// Fetches the newest companion mod into one instance, without the version,
@@ -1220,6 +1329,7 @@ fn main() {
             delete_instance,
             open_instance_folder,
             install_instance,
+            change_instance_version,
             update_client_mod,
             launch_instance,
             bedrock_info,

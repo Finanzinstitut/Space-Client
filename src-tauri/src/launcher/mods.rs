@@ -1105,3 +1105,294 @@ pub async fn repair_instance(app: &AppHandle, instance_id: String) -> anyhow::Re
         checked: total as u32,
     })
 }
+
+/// What moving an instance to another Minecraft version did to its mods.
+#[derive(Debug, Serialize, Clone, Default)]
+pub struct MigrationReport {
+    /// "Title 1.2 -> 1.3" for every mod swapped for its build for the new version
+    pub updated: Vec<String>,
+    /// Mods with no build for the new version, moved into mods/incompatible
+    pub parked: Vec<String>,
+    /// Mods left as they were, because they already fit or say nothing about it
+    pub kept: u32,
+}
+
+/// The Minecraft requirement a jar declares in fabric.mod.json / quilt.mod.json,
+/// as the list of ranges it accepts. None when the jar says nothing.
+fn declared_minecraft(path: &std::path::Path) -> Option<Vec<String>> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).ok()?;
+    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let mut text = String::new();
+    let name = if archive.by_name("fabric.mod.json").is_ok() {
+        "fabric.mod.json"
+    } else {
+        "quilt.mod.json"
+    };
+    {
+        let mut entry = archive.by_name(name).ok()?;
+        entry.read_to_string(&mut text).ok()?;
+    }
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let wanted = json
+        .pointer("/depends/minecraft")
+        .or_else(|| json.pointer("/quilt_loader/depends/minecraft"))?;
+    match wanted {
+        serde_json::Value::String(s) => Some(vec![s.clone()]),
+        serde_json::Value::Array(items) => Some(
+            items
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+/// Whether a jar claims to run on this Minecraft version. A jar that says
+/// nothing, or says it in a way we cannot read, is given the benefit of the
+/// doubt - the loader has the final word and names the real requirement.
+fn fits_version(path: &std::path::Path, mc_version: &str) -> bool {
+    match declared_minecraft(path) {
+        None => true,
+        Some(ranges) if ranges.is_empty() => true,
+        Some(ranges) => ranges
+            .iter()
+            .any(|r| crate::launcher::clientmod::version_matches(r, mc_version)),
+    }
+}
+
+fn sha1_of(path: &std::path::Path) -> Option<String> {
+    use sha1::{Digest, Sha1};
+    let bytes = std::fs::read(path).ok()?;
+    let mut hasher = Sha1::new();
+    hasher.update(&bytes);
+    Some(hex::encode(hasher.finalize()))
+}
+
+/// Asks Modrinth which project a file is, by its fingerprint, and what that
+/// project's newest build for this Minecraft version and loader is.
+async fn newer_for_file(sha1: &str, mc_version: &str, loader: &str) -> Option<serde_json::Value> {
+    let body = serde_json::json!({
+        "hashes": [sha1],
+        "algorithm": "sha1",
+        "loaders": [loader],
+        "game_versions": [mc_version],
+    });
+    let resp = http()
+        .ok()?
+        .post(format!("{}/version_files/update", MODRINTH_API))
+        .json(&body)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let map: serde_json::Value = resp.json().await.ok()?;
+    map.get(sha1).cloned()
+}
+
+/// Moves a file into mods/incompatible: out of the game's way, never deleted.
+fn park(dir: &std::path::Path, path: &std::path::Path) {
+    let parked = dir.join("incompatible");
+    std::fs::create_dir_all(&parked).ok();
+    if let Some(name) = path.file_name() {
+        std::fs::rename(path, parked.join(name)).ok();
+    }
+}
+
+/// Brings every mod of an instance onto the Minecraft version it has just been
+/// switched to.
+///
+/// Mods installed through the launcher are looked up by their project; mods
+/// added by hand are recognised by their fingerprint, so they get their new
+/// build too when Modrinth has one. A mod with no build for the new version is
+/// moved into mods/incompatible rather than deleted - the game starts without
+/// it, and it is there to put back once its author catches up.
+///
+/// Only mods. Resource packs and shaders usually keep working across versions
+/// even when nobody has re-tagged them, so they are left exactly as they are.
+/// The Space Client mod is not touched here either; it is chosen per version
+/// by clientmod.
+pub async fn migrate_mods(app: &AppHandle, inst: &instance::Instance) -> anyhow::Result<MigrationReport> {
+    let mut report = MigrationReport::default();
+    if inst.loader == "vanilla" {
+        return Ok(report);
+    }
+    let dir = inst.mods_dir();
+    let mut manifest = load_manifest(inst);
+
+    // ---- mods the launcher installed ----
+    let total = manifest.len() as u64;
+    let mut index = 0;
+    while index < manifest.len() {
+        let entry = manifest[index].clone();
+        emit_progress(app, InstallProgress {
+            stage: "mods".into(),
+            current: index as u64,
+            total,
+            file: entry.title.clone(),
+        });
+        if entry.project_type != "mod" || entry.project_id.is_empty() {
+            index += 1;
+            continue;
+        }
+        let on_disk = resolve_on_disk(&dir, &entry.filename).map(|(p, _)| p);
+
+        match best_version(&entry.project_id, &inst.mc_version, &inst.loader, "mod").await {
+            Ok(version) => {
+                let id = version.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+                if id == entry.version_id && on_disk.is_some() {
+                    report.kept += 1;
+                    index += 1;
+                    continue;
+                }
+                match download_version(inst, &version, &entry.project_id, "mod", &entry.title).await {
+                    Ok(mut fresh) => {
+                        fresh.icon_url = entry.icon_url.clone();
+                        if fresh.filename != entry.filename {
+                            if let Some(old) = &on_disk {
+                                std::fs::remove_file(old).ok();
+                            }
+                        }
+                        report.updated.push(format!(
+                            "{} {} -> {}",
+                            entry.title, entry.version_number, fresh.version_number
+                        ));
+                        manifest[index] = fresh;
+                        index += 1;
+                    }
+                    Err(_) => {
+                        // Could not fetch the new build right now: keep the old
+                        // file where it is rather than lose the mod
+                        report.kept += 1;
+                        index += 1;
+                    }
+                }
+            }
+            Err(_) => {
+                if let Some(old) = &on_disk {
+                    park(&dir, old);
+                }
+                report.parked.push(entry.title.clone());
+                manifest.remove(index);
+            }
+        }
+    }
+    save_manifest(inst, &manifest)?;
+
+    // ---- jars added by hand ----
+    let known: std::collections::HashSet<String> = manifest.iter().map(|m| m.filename.clone()).collect();
+    let Ok(read) = std::fs::read_dir(&dir) else {
+        return Ok(report);
+    };
+    for item in read.flatten() {
+        let path = item.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = item.file_name().to_string_lossy().to_string();
+        let base = base_filename(&name);
+        if !base.ends_with(".jar") || known.contains(&base) {
+            continue;
+        }
+        if base == crate::launcher::clientmod::FILE_NAME {
+            continue;
+        }
+        if fits_version(&path, &inst.mc_version) {
+            report.kept += 1;
+            continue;
+        }
+        let found = match sha1_of(&path) {
+            Some(hash) => newer_for_file(&hash, &inst.mc_version, &inst.loader).await,
+            None => None,
+        };
+        match found {
+            Some(version) => {
+                let project = version
+                    .get("project_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                match download_version(inst, &version, &project, "mod", &base).await {
+                    Ok(fresh) => {
+                        if fresh.filename != base {
+                            std::fs::remove_file(&path).ok();
+                        }
+                        report.updated.push(format!("{} -> {}", base, fresh.version_number));
+                        manifest.push(fresh);
+                    }
+                    Err(_) => {
+                        park(&dir, &path);
+                        report.parked.push(base);
+                    }
+                }
+            }
+            None => {
+                park(&dir, &path);
+                report.parked.push(base);
+            }
+        }
+    }
+    save_manifest(inst, &manifest)?;
+    Ok(report)
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn jar_with(dir: &std::path::Path, name: &str, fabric_mod_json: Option<&str>) -> std::path::PathBuf {
+        let path = dir.join(name);
+        let file = std::fs::File::create(&path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        if let Some(json) = fabric_mod_json {
+            zip.start_file("fabric.mod.json", zip::write::FileOptions::default()).unwrap();
+            zip.write_all(json.as_bytes()).unwrap();
+        } else {
+            zip.start_file("readme.txt", zip::write::FileOptions::default()).unwrap();
+            zip.write_all(b"no metadata").unwrap();
+        }
+        zip.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn reads_what_a_jar_asks_for() {
+        let dir = std::env::temp_dir().join(format!("sc-migrate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let tilde = jar_with(&dir, "a.jar", Some(r#"{"depends":{"minecraft":"~26.2"}}"#));
+        assert!(fits_version(&tilde, "26.2"));
+        assert!(fits_version(&tilde, "26.2.1"));
+        assert!(!fits_version(&tilde, "26.3"));
+
+        let list = jar_with(&dir, "b.jar", Some(r#"{"depends":{"minecraft":["26.2","26.3"]}}"#));
+        assert!(fits_version(&list, "26.3"));
+        assert!(!fits_version(&list, "26.4"));
+
+        let any = jar_with(&dir, "c.jar", Some(r#"{"depends":{"minecraft":"*"}}"#));
+        assert!(fits_version(&any, "26.3"));
+
+        // Nothing declared, or no metadata at all: left alone
+        let silent = jar_with(&dir, "d.jar", Some(r#"{"depends":{"fabricloader":">=0.19"}}"#));
+        assert!(fits_version(&silent, "26.3"));
+        let bare = jar_with(&dir, "e.jar", None);
+        assert!(fits_version(&bare, "26.3"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn parking_keeps_the_file() {
+        let dir = std::env::temp_dir().join(format!("sc-park-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let jar = jar_with(&dir, "old.jar", None);
+        park(&dir, &jar);
+        assert!(!jar.exists());
+        assert!(dir.join("incompatible").join("old.jar").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

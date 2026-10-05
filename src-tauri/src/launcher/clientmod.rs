@@ -318,18 +318,70 @@ pub(crate) fn version_matches(range: &str, version: &str) -> bool {
         return true;
     }
 
+    // Several conditions separated by spaces all have to hold: ">=26.2 <26.4"
+    if range.contains(' ') {
+        return range
+            .split_whitespace()
+            .all(|part| version_matches(part, version));
+    }
+
     if let Some(base) = range.strip_prefix('~') {
         // ~26.2 covers the 26.2 series: 26.2, 26.2.1 and so on
         return version == base || version.starts_with(&format!("{}.", base));
     }
+    if let Some(base) = range.strip_prefix('^') {
+        // Same major and at least this version
+        let major = base.split('.').next().unwrap_or("");
+        return version.split('.').next() == Some(major) && compare(version, base) >= 0;
+    }
 
-    if let Some(base) = range.strip_prefix(">=") {
-        return version >= base.trim();
+    for (prefix, test) in [
+        (">=", (|o: i32| o >= 0) as fn(i32) -> bool),
+        ("<=", |o| o <= 0),
+        (">", |o| o > 0),
+        ("<", |o| o < 0),
+        ("=", |o| o == 0),
+    ] {
+        if let Some(base) = range.strip_prefix(prefix) {
+            return test(compare(version, base.trim()));
+        }
+    }
+
+    // A plain version, possibly with an x or * for one part: "26.2", "26.2.x"
+    if range.chars().all(|c| c.is_ascii_digit() || c == '.' || c == 'x' || c == 'X' || c == '*') {
+        let wanted: Vec<&str> = range.split('.').collect();
+        let have: Vec<&str> = version.split('.').collect();
+        if let Some(wild) = wanted.iter().position(|p| matches!(*p, "x" | "X" | "*")) {
+            return have.len() >= wild && wanted[..wild] == have[..wild];
+        }
+        // Exact: 26.2 is 26.2 and also 26.2.0, but not 26.3
+        return compare(version, range) == 0;
     }
 
     // Something this does not understand. Say yes and let the loader have the
     // final word - it will refuse with a message naming the real requirement.
     true
+}
+
+/// Numeric comparison of dotted versions; missing parts count as 0 and
+/// anything after a dash (pre-release tags) is ignored.
+fn compare(a: &str, b: &str) -> i32 {
+    let parse = |v: &str| -> Vec<u64> {
+        v.split('-')
+            .next()
+            .unwrap_or("")
+            .split('.')
+            .map(|p| p.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let (x, y) = (parse(a), parse(b));
+    for i in 0..x.len().max(y.len()) {
+        let (p, q) = (x.get(i).copied().unwrap_or(0), y.get(i).copied().unwrap_or(0));
+        if p != q {
+            return if p < q { -1 } else { 1 };
+        }
+    }
+    0
 }
 
 /// Modrinth slug of the cosmetics mod offered alongside the client.
@@ -434,6 +486,22 @@ mod tests {
         assert_eq!(release_version(&release), "1.47.0");
         let release = serde_json::json!({ "tag_name": "v1.2.3" });
         assert_eq!(release_version(&release), "1.2.3");
+    }
+
+    #[test]
+    fn version_ranges_read_like_fabric() {
+        assert!(version_matches("26.2", "26.2"));
+        assert!(!version_matches("26.2", "26.3"));
+        assert!(version_matches("26.2.x", "26.2.4"));
+        assert!(!version_matches("26.2.x", "26.3"));
+        assert!(version_matches(">=26.2", "26.3"));
+        assert!(!version_matches(">=26.3", "26.2"));
+        assert!(version_matches(">=26.2 <26.4", "26.3"));
+        assert!(!version_matches(">=26.2 <26.3", "26.3"));
+        assert!(version_matches("~26.3", "26.3.1"));
+        assert!(version_matches("*", "26.3"));
+        assert!(version_matches(">=26.10", "26.10"));
+        assert!(!version_matches(">=26.10", "26.9"));
     }
 
     #[test]
