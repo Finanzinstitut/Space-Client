@@ -1274,6 +1274,8 @@ async function openEditModal(inst) {
   $("edit-client-mod").checked = inst.install_client_mod !== false;
   $("edit-backdrop").classList.remove("hidden");
 
+  fillUpgradeVersions(inst);
+
   await fillLoaderVersions(
     "edit-loader-version",
     inst.loader,
@@ -1281,6 +1283,73 @@ async function openEditModal(inst) {
     inst.loader_version
   );
 }
+
+/* ---------------- change Minecraft version ---------------- */
+
+/** Releases to move to, newest first, with the instance's own one selected. */
+function fillUpgradeVersions(inst) {
+  const select = $("edit-upgrade-version");
+  select.innerHTML = "";
+  allVersions
+    .filter((v) => v.type === "release" || v.id === inst.mc_version)
+    .forEach((v) => {
+      const opt = document.createElement("option");
+      opt.value = v.id;
+      opt.textContent = v.id === inst.mc_version ? `${v.id} (${t("upgrade_current")})` : v.id;
+      select.appendChild(opt);
+    });
+  select.value = inst.mc_version;
+  resetUpgradeButton();
+}
+
+let upgradeArmed = null;
+
+function resetUpgradeButton() {
+  upgradeArmed = null;
+  $("btn-upgrade-version").textContent = t("upgrade_btn");
+}
+
+$("edit-upgrade-version").addEventListener("change", resetUpgradeButton);
+
+$("btn-upgrade-version").addEventListener("click", async () => {
+  if (!editingInstance) return;
+  const target = $("edit-upgrade-version").value;
+  if (!target || target === editingInstance.mc_version) {
+    setStatus("edit-status", t("upgrade_same"), "error");
+    return;
+  }
+  // Two clicks: the first says what will happen, the second does it
+  if (upgradeArmed !== target) {
+    upgradeArmed = target;
+    $("btn-upgrade-version").textContent = t("upgrade_confirm", { v: target });
+    return;
+  }
+
+  const inst = editingInstance;
+  resetUpgradeButton();
+  $("btn-upgrade-version").disabled = true;
+  setStatus("edit-status", t("upgrade_running", { v: target }));
+  try {
+    const result = await invoke("change_instance_version", { id: inst.id, mcVersion: target });
+    $("edit-backdrop").classList.add("hidden");
+    editingInstance = null;
+    await refreshInstances();
+    setStatus(
+      "global-status",
+      t("upgrade_done", {
+        v: target,
+        worlds: result.backed_up,
+        updated: result.mods.updated.length,
+        parked: result.mods.parked.length,
+      }),
+      "success"
+    );
+  } catch (e) {
+    setStatus("edit-status", String(e), "error");
+  } finally {
+    $("btn-upgrade-version").disabled = false;
+  }
+});
 
 $("edit-ram").addEventListener("input", (e) => {
   $("edit-ram-value").textContent = e.target.value + " MB";
