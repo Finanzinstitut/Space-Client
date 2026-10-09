@@ -57,7 +57,14 @@ pub async fn install_client_mod(app: &AppHandle, instance: &Instance) -> anyhow:
 
     let mods_dir = instance.mods_dir();
     let dest = mods_dir.join(FILE_NAME);
-    let installed = installed_version(&dest);
+    // Only counts as installed if it also fits: an instance moved to another
+    // Minecraft version keeps the old build's jar, with the same mod version
+    // as the new release but built for the version it left.
+    let installed = installed_version(&dest).filter(|_| {
+        std::fs::read(&dest)
+            .map(|bytes| matches!(jar_fits(&bytes, instance), Fit::Yes))
+            .unwrap_or(false)
+    });
 
     // Older releases name their jar without the Minecraft version, so the only
     // way to know what they are for is to look inside. Capped, so a long run of
@@ -66,7 +73,7 @@ pub async fn install_client_mod(app: &AppHandle, instance: &Instance) -> anyhow:
     let mut skipped: Option<String> = None;
 
     for release in &releases {
-        let Some(asset) = mod_asset(release) else { continue };
+        let Some(asset) = mod_asset(release, &instance.mc_version) else { continue };
         let version = release_version(release);
 
         match asset.mc_version.as_deref() {
@@ -180,21 +187,39 @@ struct ModAsset {
     mc_version: Option<String>,
 }
 
-fn mod_asset(release: &serde_json::Value) -> Option<ModAsset> {
+/// The jar of one release that suits `instance_mc`.
+///
+/// A release carries one jar per supported Minecraft version, so the first jar
+/// is not the right one: the one labelled for the instance's series is. Failing
+/// that, an unlabelled jar (older releases), whose fabric.mod.json then decides.
+/// Failing that, any labelled jar, only so the caller can say what it skipped.
+fn mod_asset(release: &serde_json::Value, instance_mc: &str) -> Option<ModAsset> {
     let assets = release.get("assets")?.as_array()?;
-    let asset = assets.iter().find(|a| {
-        let name = a.get("name").and_then(|n| n.as_str()).unwrap_or("");
-        // Skipping the sources and dev jars Loom also produces
-        name.ends_with(".jar")
-            && !name.contains("sources")
-            && !name.contains("dev")
-            && !name.contains("shadow")
-    })?;
-    let name = asset.get("name")?.as_str()?;
-    Some(ModAsset {
-        url: asset.get("browser_download_url")?.as_str()?.to_string(),
-        mc_version: mc_from_name(name),
-    })
+    let jars: Vec<ModAsset> = assets
+        .iter()
+        .filter_map(|a| {
+            let name = a.get("name")?.as_str()?;
+            // Skipping the sources and dev jars Loom also produces
+            if !name.ends_with(".jar")
+                || name.contains("sources")
+                || name.contains("dev")
+                || name.contains("shadow")
+            {
+                return None;
+            }
+            Some(ModAsset {
+                url: a.get("browser_download_url")?.as_str()?.to_string(),
+                mc_version: mc_from_name(name),
+            })
+        })
+        .collect();
+
+    let pick = jars
+        .iter()
+        .position(|j| j.mc_version.as_deref().is_some_and(|mc| same_series(mc, instance_mc)))
+        .or_else(|| jars.iter().position(|j| j.mc_version.is_none()))
+        .or(if jars.is_empty() { None } else { Some(0) })?;
+    jars.into_iter().nth(pick)
 }
 
 /// "spaceclient-1.47.0-mc26.3.jar" -> "26.3".
@@ -523,8 +548,39 @@ mod tests {
                 { "name": "spaceclient-1.47.0-mc26.3.jar", "browser_download_url": "https://x/mod" }
             ]
         });
-        let asset = mod_asset(&release).unwrap();
+        let asset = mod_asset(&release, "26.3").unwrap();
         assert_eq!(asset.url, "https://x/mod");
         assert_eq!(asset.mc_version.as_deref(), Some("26.3"));
+    }
+
+    #[test]
+    fn picks_the_jar_for_the_instance_version() {
+        let release = serde_json::json!({
+            "tag_name": "v.1.55.0",
+            "assets": [
+                { "name": "spaceclient-1.55.0-mc1.21.11.jar", "browser_download_url": "https://x/1.21.11" },
+                { "name": "spaceclient-1.55.0-mc26.1.jar", "browser_download_url": "https://x/26.1" },
+                { "name": "spaceclient-1.55.0-mc26.2.jar", "browser_download_url": "https://x/26.2" },
+                { "name": "spaceclient-1.55.0-mc26.3.jar", "browser_download_url": "https://x/26.3" }
+            ]
+        });
+        let url = |mc: &str| mod_asset(&release, mc).unwrap().url;
+        assert_eq!(url("1.21.11"), "https://x/1.21.11");
+        assert_eq!(url("26.1"), "https://x/26.1");
+        assert_eq!(url("26.1.2"), "https://x/26.1");
+        assert_eq!(url("26.2"), "https://x/26.2");
+        assert_eq!(url("26.3"), "https://x/26.3");
+        // Nothing for this version: a labelled jar comes back, and the caller
+        // skips it by its label without downloading
+        let other = mod_asset(&release, "1.21.10").unwrap();
+        assert!(!same_series(other.mc_version.as_deref().unwrap(), "1.21.10"));
+    }
+
+    #[test]
+    fn the_26_1_jar_accepts_every_26_1_patch() {
+        assert!(version_matches(">=26.1 <26.2", "26.1"));
+        assert!(version_matches(">=26.1 <26.2", "26.1.2"));
+        assert!(!version_matches(">=26.1 <26.2", "26.2"));
+        assert!(version_matches("~1.21.11", "1.21.11"));
     }
 }

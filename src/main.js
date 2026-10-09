@@ -1416,7 +1416,7 @@ $("new-snapshots").addEventListener("change", () => {
 /// The HUD mod is a Fabric mod with builds for these release series. The
 /// launcher picks the build that matches the instance; any other version
 /// silently gets an instance without it, so say so up front.
-const HUD_MC_SERIES = ["26.2", "26.3"];
+const HUD_MC_SERIES = ["1.21.11", "26.1", "26.2", "26.3"];
 const HUD_LOADERS = ["fabric", "quilt"];
 
 function updateHudCompatNote() {
