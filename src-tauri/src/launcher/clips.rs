@@ -202,59 +202,191 @@ fn which_in_path(name: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// Where a Windows build of FFmpeg is fetched from when there is none.
+/// Where a Windows build of FFmpeg is fetched from when there is none, tried
+/// in order.
 ///
 /// Only Windows, and deliberately so. The other two platforms have a package
-/// manager and a one line install, while Windows has neither and a person who
-/// wanted to press a key in a game now has a zip to find. Downloading a
-/// seventy megabyte binary is worth avoiding where it can be avoided.
-const FFMPEG_WINDOWS_ZIP: &str =
-    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
+/// manager and a one line install, while Windows has neither. GitHub's release
+/// storage comes first because it sits behind a CDN that is fast everywhere;
+/// the second is the long-standing Windows build site, kept as the way out
+/// when the first is unreachable. Both carry `bin/ffmpeg.exe` and
+/// `bin/ffprobe.exe` inside one versioned folder.
+const FFMPEG_WINDOWS_ZIPS: &[&str] = &[
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+];
 
-/// Fetches FFmpeg if it is missing. Says what happened either way.
-pub async fn ensure_ffmpeg() -> Result<String, String> {
-    if ffmpeg_path().is_some() {
+/// Set while a fetch runs, so the automatic one and a press of the button
+/// never write the same files at once.
+static INSTALLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether an automatic fetch was already tried this launcher run. A machine
+/// without internet should get one attempt and a message, not a retry loop.
+static AUTO_TRIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn installing() -> bool {
+    INSTALLING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Whether the launcher should fetch FFmpeg by itself now: on Windows, when
+/// it is missing, clips are wanted, and no attempt was made yet this run.
+/// Claims the attempt, so it answers yes at most once.
+pub fn should_auto_install() -> bool {
+    use std::sync::atomic::Ordering;
+    // Cheap checks first: this is asked twice a second.
+    if !cfg!(windows) || AUTO_TRIED.load(Ordering::SeqCst) || installing() {
+        return false;
+    }
+    if !wants_recording(&load_wish(), &load_capture()) {
+        return false;
+    }
+    if AUTO_TRIED.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    !ffmpeg_works()
+}
+
+/// FFmpeg is there and actually runs. A file of the right name is not enough:
+/// an earlier fetch that broke off half way left one behind that the status
+/// check counted as installed.
+pub fn ffmpeg_works() -> bool {
+    let Some(path) = ffmpeg_path() else { return false };
+    runs(&path)
+}
+
+fn runs(path: &Path) -> bool {
+    let mut command = Command::new(path);
+    command.arg("-version").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    quiet(&mut command, false);
+    command.status().map(|s| s.success()).unwrap_or(false)
+}
+
+/// Fetches FFmpeg if it is missing or broken. Says what happened either way.
+/// `progress` hears (bytes so far, bytes in all - 0 when the server keeps
+/// that to itself) while the download runs.
+pub async fn ensure_ffmpeg<F>(progress: F) -> Result<String, String>
+where
+    F: Fn(u64, u64) + Send + Sync,
+{
+    if ffmpeg_works() {
         return Ok("FFmpeg is already here".into());
     }
     if !cfg!(windows) {
         return Err("FFmpeg is missing. Install it with your package manager \
                     (apt install ffmpeg, brew install ffmpeg) and try again.".into());
     }
+    if INSTALLING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return Err("FFmpeg is already being downloaded".into());
+    }
+    let result = fetch_any(&progress).await;
+    INSTALLING.store(false, std::sync::atomic::Ordering::SeqCst);
+    result
+}
 
+async fn fetch_any<F: Fn(u64, u64)>(progress: &F) -> Result<String, String> {
     let target = bundled_dir();
-    std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&target).map_err(|e| format!("could not create {}: {e}", target.display()))?;
 
-    let bytes = reqwest::get(FFMPEG_WINDOWS_ZIP)
+    let mut failures = Vec::new();
+    for url in FFMPEG_WINDOWS_ZIPS {
+        match fetch_from(url, &target, progress).await {
+            Ok(()) => return Ok(format!("FFmpeg installed to {}", target.to_string_lossy())),
+            Err(e) => failures.push(format!("{}: {e}", host_of(url))),
+        }
+    }
+    Err(format!("FFmpeg could not be downloaded ({})", failures.join("; ")))
+}
+
+fn host_of(url: &str) -> &str {
+    url.split("://").nth(1).and_then(|rest| rest.split('/').next()).unwrap_or(url)
+}
+
+async fn fetch_from<F: Fn(u64, u64)>(url: &str, target: &Path, progress: &F) -> Result<(), String> {
+    use futures_util::StreamExt;
+    use std::io::Write;
+
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("SpaceClient-Launcher/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let response = client
+        .get(url)
+        .send()
         .await
         .map_err(|e| format!("could not reach the download: {e}"))?
-        .bytes()
-        .await
-        .map_err(|e| format!("the download broke off: {e}"))?;
+        .error_for_status()
+        .map_err(|e| format!("the server said no: {e}"))?;
 
-    let reader = std::io::Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(reader).map_err(|e| format!("not a readable zip: {e}"))?;
+    // Straight to disk: a hundred megabytes held in memory and then copied
+    // out again is a lot to ask of a small machine for no reason.
+    let zip_path = target.join("ffmpeg-download.zip");
+    let total = response.content_length().unwrap_or(0);
+    {
+        let mut file = std::fs::File::create(&zip_path).map_err(|e| e.to_string())?;
+        let mut stream = response.bytes_stream();
+        let mut done = 0u64;
+        let mut last_report = 0u64;
+        progress(0, total);
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("the download broke off: {e}"))?;
+            file.write_all(&chunk).map_err(|e| e.to_string())?;
+            done += chunk.len() as u64;
+            if done - last_report >= 512 * 1024 {
+                last_report = done;
+                progress(done, total);
+            }
+        }
+        file.flush().map_err(|e| e.to_string())?;
+        progress(done, total.max(done));
+        if total > 0 && done < total {
+            return Err(format!("the download stopped at {done} of {total} bytes"));
+        }
+    }
 
-    // The zip carries a whole build; two files out of it are enough, and they
-    // are taken by name rather than by position because the folder inside
-    // carries the version number and changes with every release.
+    let extracted = extract_tools(&zip_path, target);
+    let _ = std::fs::remove_file(&zip_path);
+    extracted?;
+
+    if !runs(&target.join(exe_name("ffmpeg"))) {
+        return Err("the downloaded FFmpeg does not start (blocked by antivirus?)".into());
+    }
+    Ok(())
+}
+
+/// Takes ffmpeg and ffprobe out of the zip by name rather than position,
+/// because the folder inside carries the version and changes every release.
+/// Each is written under a temporary name and moved into place only when
+/// complete, so a broken-off extraction never leaves a file that looks fine.
+fn extract_tools(zip_path: &Path, target: &Path) -> Result<(), String> {
+    let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("not a readable zip: {e}"))?;
+
     let mut taken = 0;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|e| e.to_string())?;
-        let name = entry.name().to_string();
-        let wanted = name.ends_with("/ffmpeg.exe") || name.ends_with("/ffprobe.exe");
+        let name = entry.name().replace('\\', "/");
+        let leaf = name.rsplit('/').next().unwrap_or("").to_string();
+        let wanted = name.contains("/bin/")
+            && (leaf == exe_name("ffmpeg") || leaf == exe_name("ffprobe"));
         if !wanted {
             continue;
         }
-        let leaf = name.rsplit('/').next().unwrap_or("ffmpeg.exe").to_string();
-        let mut file = std::fs::File::create(target.join(leaf)).map_err(|e| e.to_string())?;
-        std::io::copy(&mut entry, &mut file).map_err(|e| e.to_string())?;
+        let part = target.join(format!("{leaf}.part"));
+        {
+            let mut out = std::fs::File::create(&part).map_err(|e| e.to_string())?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| format!("could not unpack {leaf}: {e}"))?;
+        }
+        let finished = target.join(&leaf);
+        let _ = std::fs::remove_file(&finished);
+        std::fs::rename(&part, &finished).map_err(|e| format!("could not place {leaf}: {e}"))?;
         taken += 1;
     }
 
     if taken < 2 {
         return Err("the download did not contain FFmpeg".into());
     }
-    Ok(format!("FFmpeg installed to {}", target.to_string_lossy()))
+    Ok(())
 }
 
 // ---------------------------------------------------------------- devices
@@ -917,6 +1049,8 @@ static RECORDER: Mutex<Option<Child>> = Mutex::new(None);
 pub struct ClipStatus {
     pub recording: bool,
     pub ffmpeg: bool,
+    /// FFmpeg is being downloaded right now.
+    pub installing: bool,
     pub seconds: u32,
     /// Which sound situation this machine is in, as a word the interface
     /// turns into a sentence in whichever language it is speaking.
@@ -973,6 +1107,7 @@ pub fn status() -> ClipStatus {
     ClipStatus {
         recording: RECORDER.lock().map(|r| r.is_some()).unwrap_or(false),
         ffmpeg: ffmpeg_path().is_some(),
+        installing: installing(),
         seconds: effective_seconds(&wish, &capture),
         audio_state: audio_state(&inputs, &capture).to_string(),
         system_device: inputs.system.unwrap_or_default(),
@@ -1210,6 +1345,54 @@ mod tests {
 
     fn settings() -> CaptureSettings {
         CaptureSettings { fps: 60, quality: 23, ..Default::default() }
+    }
+
+    #[test]
+    fn only_the_two_tools_are_taken_out_of_the_zip() {
+        use std::io::Write;
+        let room = std::env::temp_dir().join(format!("sc-ffzip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&room);
+        std::fs::create_dir_all(&room).unwrap();
+        let zip_path = room.join("build.zip");
+        {
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+            let options = zip::write::FileOptions::default();
+            for (name, body) in [
+                (format!("ffmpeg-9.0-build/bin/{}", exe_name("ffmpeg")), "encoder"),
+                (format!("ffmpeg-9.0-build/bin/{}", exe_name("ffprobe")), "prober"),
+                (format!("ffmpeg-9.0-build/bin/{}", exe_name("ffplay")), "player"),
+                (format!("ffmpeg-9.0-build/doc/{}", exe_name("ffmpeg")), "not this"),
+            ] {
+                zip.start_file(name, options).unwrap();
+                zip.write_all(body.as_bytes()).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+
+        extract_tools(&zip_path, &room).expect("both tools");
+        let read = |stem: &str| std::fs::read_to_string(room.join(exe_name(stem))).unwrap();
+        assert_eq!(read("ffmpeg"), "encoder");
+        assert_eq!(read("ffprobe"), "prober");
+        assert!(!room.join(exe_name("ffplay")).exists());
+        assert!(!room.join(format!("{}.part", exe_name("ffmpeg"))).exists());
+        let _ = std::fs::remove_dir_all(&room);
+    }
+
+    #[test]
+    fn a_zip_without_ffmpeg_is_refused() {
+        use std::io::Write;
+        let room = std::env::temp_dir().join(format!("sc-ffzip-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&room);
+        std::fs::create_dir_all(&room).unwrap();
+        let zip_path = room.join("build.zip");
+        {
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+            zip.start_file("readme.txt", zip::write::FileOptions::default()).unwrap();
+            zip.write_all(b"nothing").unwrap();
+            zip.finish().unwrap();
+        }
+        assert!(extract_tools(&zip_path, &room).is_err());
+        let _ = std::fs::remove_dir_all(&room);
     }
 
     #[test]

@@ -1243,8 +1243,25 @@ fn list_audio_devices() -> Vec<launcher::clips::AudioDevice> {
 }
 
 #[tauri::command]
-async fn install_ffmpeg() -> Result<String, String> {
-    launcher::clips::ensure_ffmpeg().await
+async fn install_ffmpeg(app: tauri::AppHandle) -> Result<String, String> {
+    fetch_ffmpeg(&app).await
+}
+
+/// Downloads FFmpeg and tells the window how far along it is, by the button
+/// or by itself when clips are wanted and it is missing.
+async fn fetch_ffmpeg(app: &tauri::AppHandle) -> Result<String, String> {
+    let progress = {
+        let app = app.clone();
+        move |done: u64, total: u64| {
+            let _ = app.emit("ffmpeg-progress", serde_json::json!({ "done": done, "total": total }));
+        }
+    };
+    let result = launcher::clips::ensure_ffmpeg(progress).await;
+    let _ = app.emit("ffmpeg-finished", serde_json::json!({
+        "ok": result.is_ok(),
+        "message": match &result { Ok(m) => m.clone(), Err(e) => e.clone() },
+    }));
+    result
 }
 
 #[tauri::command]
@@ -1395,6 +1412,17 @@ fn main() {
 
                     for file in made {
                         let _ = handle.emit("clip-saved", file);
+                    }
+                    // Clips are wanted and FFmpeg is not there: fetch it now
+                    // rather than waiting for somebody to find a button.
+                    let auto = tauri::async_runtime::spawn_blocking(launcher::clips::should_auto_install)
+                        .await
+                        .unwrap_or(false);
+                    if auto {
+                        let app = handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let _ = fetch_ffmpeg(&app).await;
+                        });
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 }
