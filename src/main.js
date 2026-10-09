@@ -3497,6 +3497,12 @@ async function refreshClips(reloadList = true) {
   }
 
   $("clips-missing").classList.toggle("hidden", clipStatus.ffmpeg);
+  if (clipStatus.installing) {
+    $("btn-install-ffmpeg").disabled = true;
+  } else if (!clipStatus.ffmpeg && !ffmpegAutoTried) {
+    ffmpegAutoTried = true;
+    installFfmpeg();
+  }
 
   $("clips-enabled").checked = clipSettings.enabled;
   $("clips-mic").checked = clipSettings.microphone;
@@ -3695,18 +3701,42 @@ $("btn-clip-delete").addEventListener("click", async () => {
   }
 });
 
-$("btn-install-ffmpeg").addEventListener("click", async () => {
-  setStatus("ffmpeg-status", "…");
+// FFmpeg kommt von selbst: beim ersten Oeffnen der Clips-Seite (oder sobald
+// das Spiel Clips will) laedt der Launcher es herunter. Der Knopf bleibt fuer
+// einen zweiten Versuch, falls der erste scheitert.
+let ffmpegAutoTried = false;
+
+async function installFfmpeg() {
+  setStatus("ffmpeg-status", t("ffmpeg_starting"));
   $("btn-install-ffmpeg").disabled = true;
   try {
     const note = await invoke("install_ffmpeg");
     setStatus("ffmpeg-status", note, "success");
-    await refreshClips();
   } catch (e) {
-    setStatus("ffmpeg-status", String(e), "error");
+    setStatus("ffmpeg-status", t("ffmpeg_failed") + " " + String(e), "error");
   } finally {
     $("btn-install-ffmpeg").disabled = false;
+    await refreshClips();
   }
+}
+
+$("btn-install-ffmpeg").addEventListener("click", installFfmpeg);
+
+listen("ffmpeg-progress", (event) => {
+  const { done, total } = event.payload || {};
+  $("btn-install-ffmpeg").disabled = true;
+  const mb = (n) => (n / 1048576).toFixed(0);
+  const text = total > 0
+    ? t("ffmpeg_progress") + " " + Math.floor((done / total) * 100) + " % (" + mb(done) + " / " + mb(total) + " MB)"
+    : t("ffmpeg_progress") + " " + mb(done) + " MB";
+  setStatus("ffmpeg-status", text);
+});
+
+listen("ffmpeg-finished", (event) => {
+  const { ok, message } = event.payload || {};
+  $("btn-install-ffmpeg").disabled = false;
+  setStatus("ffmpeg-status", ok ? message : t("ffmpeg_failed") + " " + message, ok ? "success" : "error");
+  refreshClips();
 });
 
 // Der Launcher sagt Bescheid, wenn das Spiel einen Clip angefordert hat
