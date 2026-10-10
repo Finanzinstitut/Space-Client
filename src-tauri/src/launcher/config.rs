@@ -82,6 +82,17 @@ pub struct LauncherConfig {
     /// and the only Space Client part that reaches it is the resource pack.
     #[serde(default = "default_edition")]
     pub edition: String,
+    /// The colour theme: "space", "nebula", "ocean", "ember", "forest" or
+    /// "sakura". Space is the original black and white.
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    /// The animated background that goes with the theme.
+    #[serde(default = "default_true")]
+    pub bg_animation: bool,
+}
+
+fn default_theme() -> String {
+    "space".to_string()
 }
 
 fn default_edition() -> String {
@@ -118,6 +129,8 @@ impl Default for LauncherConfig {
             backup_keep: 5,
             auto_update_client_mod: true,
             curseforge_key: String::new(),
+            theme: default_theme(),
+            bg_animation: true,
             edition: default_edition(),
         }
     }

@@ -870,6 +870,24 @@ async fn set_edition(edition: String, state: State<'_, AppState>) -> Result<Laun
     Ok(cfg.clone())
 }
 
+/// The colour theme and its background animation. Saved the moment it is
+/// picked rather than with the settings' Save button: a theme is something you
+/// look at while choosing, and having it revert on leaving the page would be
+/// a surprise.
+#[tauri::command]
+async fn set_appearance(
+    theme: String,
+    bg_animation: bool,
+    state: State<'_, AppState>,
+) -> Result<LauncherConfig, String> {
+    const THEMES: [&str; 6] = ["space", "nebula", "ocean", "ember", "forest", "sakura"];
+    let mut cfg = state.config.lock().unwrap();
+    cfg.theme = if THEMES.contains(&theme.as_str()) { theme } else { "space".into() };
+    cfg.bg_animation = bg_animation;
+    cfg.save().map_err(|e| e.to_string())?;
+    Ok(cfg.clone())
+}
+
 /// Opens the installed Minecraft Bedrock. No instance, no account check and no
 /// process to watch: Windows owns the game's lifetime once the protocol hands
 /// it over, so there is nothing to put in the running list.
@@ -1390,6 +1408,7 @@ fn main() {
             launch_instance,
             bedrock_info,
             set_edition,
+            set_appearance,
             launch_bedrock,
             install_bedrock_pack,
             remove_bedrock_pack,
