@@ -1,5 +1,6 @@
 import { t, setLanguage, applyTranslations } from "./i18n.js";
 import { createSkinViewer, renderSkinFlat, renderCape } from "./skinrender.js";
+import { setBackground, pauseBackground, THEMES } from "./background.js";
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -1013,6 +1014,7 @@ function renderRunning() {
   if (!strip || !list || !button) return;
 
   const active = instances.filter((i) => runningIds.has(i.id));
+  pauseBackground(active.length > 0);
 
   button.classList.toggle("hidden", active.length === 0);
   if (label) {
@@ -2653,6 +2655,71 @@ $("btn-update-all-mods").addEventListener("click", async () => {
   }
 });
 
+// ---------------- appearance ----------------
+//
+// Picked and saved in one go, without the settings' Save button: a theme is
+// judged by looking at it, and a look that reverts on leaving the page would
+// make every choice a guess.
+
+/** What each theme's tile shows: its background, the two animation colours and the accent. */
+const THEME_LOOK = {
+  space: { bg: "#000000", a: "#ffffff", b: "#8a8a98", accent: "#e9e9ef" },
+  nebula: { bg: "#05030a", a: "#8b5cf6", b: "#ec4899", accent: "#b794ff" },
+  ocean: { bg: "#02070b", a: "#0ea5e9", b: "#2dd4bf", accent: "#4cc9f0" },
+  ember: { bg: "#080402", a: "#f97316", b: "#fbbf24", accent: "#ff8a3d" },
+  forest: { bg: "#030805", a: "#22c55e", b: "#d9f99d", accent: "#6ee7a0" },
+  sakura: { bg: "#0a0508", a: "#f472b6", b: "#fecdd3", accent: "#ff9ec7" },
+};
+
+function currentTheme() {
+  return THEMES.includes(config?.theme) ? config.theme : "space";
+}
+
+function applyAppearance() {
+  const theme = currentTheme();
+  if (theme === "space") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  setBackground(theme, config?.bg_animation !== false);
+}
+
+function renderThemeGrid() {
+  const grid = $("theme-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  for (const name of THEMES) {
+    const look = THEME_LOOK[name];
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = "theme-swatch" + (name === currentTheme() ? " active" : "");
+    const preview = document.createElement("div");
+    preview.className = "theme-preview";
+    preview.style.background =
+      `radial-gradient(60px 40px at 25% 35%, ${look.a}55, transparent 70%),` +
+      `radial-gradient(70px 40px at 75% 70%, ${look.b}44, transparent 70%), ${look.bg}`;
+    preview.style.setProperty("--swatch-accent", look.accent);
+    const label = document.createElement("span");
+    label.textContent = t("theme_" + name);
+    tile.append(preview, label);
+    tile.onclick = () => saveAppearance(name, $("bg-animation").checked);
+    grid.appendChild(tile);
+  }
+}
+
+async function saveAppearance(theme, animated) {
+  // Shown first, saved after: the change should feel instant even if writing
+  // the settings file takes a moment
+  config = { ...config, theme, bg_animation: animated };
+  applyAppearance();
+  renderThemeGrid();
+  try {
+    config = await invoke("set_appearance", { theme, bgAnimation: animated });
+  } catch (e) {
+    setStatus("settings-status", String(e), "error");
+  }
+}
+
+$("bg-animation").addEventListener("change", (e) => saveAppearance(currentTheme(), e.target.checked));
+
 // ---------------- settings ----------------
 $("btn-pick-path").addEventListener("click", async () => {
   const selected = await open({ directory: true, multiple: false });
@@ -2682,6 +2749,7 @@ $("btn-save-settings").addEventListener("click", async () => {
     });
     setLanguage(config.language);
     applyTranslations();
+    renderThemeGrid();
     applyMotionPrefs();
     refreshCurseforgeReady();
     renderInstances();
@@ -2802,6 +2870,9 @@ async function installUpdate(info) {
 // ---------------- init ----------------
 async function init() {
   config = await invoke("get_config");
+  // Before anything else is drawn, so the window does not flash the default
+  // colours first
+  applyAppearance();
   setLanguage(config.language || "en");
   applyTranslations();
 
@@ -2818,6 +2889,8 @@ async function init() {
   $("auto-update-mod").checked = config.auto_update_client_mod !== false;
   $("curseforge-key").value = config.curseforge_key || "";
   $("backup-keep").value = config.backup_keep || 5;
+  $("bg-animation").checked = config.bg_animation !== false;
+  renderThemeGrid();
   applyMotionPrefs();
   applyEdition(config.edition === "bedrock" ? "bedrock" : "java");
 
