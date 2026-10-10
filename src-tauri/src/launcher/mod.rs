@@ -9,6 +9,7 @@ pub mod config;
 pub mod crash;
 pub mod curseforge;
 pub mod download;
+pub mod export;
 pub mod instance;
 pub mod java;
 pub mod launch;

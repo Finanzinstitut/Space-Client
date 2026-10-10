@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="color-scheme" content="dark" />
   <title>Space Client</title>
   <link rel="stylesheet" href="style.css" />
   <!-- Loaded after style.css so it can refine movement without redefining
@@ -783,6 +784,53 @@
         <button id="btn-confirm-create" class="btn primary" data-i18n="btn_create"></button>
       </div>
       <div id="create-status" class="status-line"></div>
+    </div>
+  </div>
+
+  <!--
+    EXPORT INSTANCE. A tree of .minecraft with a tick per file and folder,
+    loaded a folder at a time as it is opened - a saves folder can hold tens of
+    thousands of files and nobody wants to wait for all of them to be listed.
+  -->
+  <div id="export-backdrop" class="modal-backdrop hidden">
+    <div class="modal modal-wide">
+      <h2 data-i18n="export_title"></h2>
+      <p class="hint" id="export-sub"></p>
+
+      <div class="row export-tools">
+        <button id="btn-export-all" class="btn secondary small" data-i18n="export_all"></button>
+        <button id="btn-export-default" class="btn secondary small" data-i18n="export_default"></button>
+        <button id="btn-export-none" class="btn secondary small" data-i18n="export_none"></button>
+        <span id="export-summary" class="export-summary"></span>
+      </div>
+
+      <div id="export-tree" class="export-tree"></div>
+
+      <div class="field grow">
+        <label data-i18n="export_format"></label>
+        <div class="export-formats">
+          <label class="export-format">
+            <input type="radio" name="export-format" value="spc" checked />
+            <span class="export-format-body">
+              <strong data-i18n="export_spc"></strong>
+              <span data-i18n="export_spc_hint"></span>
+            </span>
+          </label>
+          <label class="export-format">
+            <input type="radio" name="export-format" value="mrpack" />
+            <span class="export-format-body">
+              <strong data-i18n="export_mrpack"></strong>
+              <span data-i18n="export_mrpack_hint"></span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div class="row actions">
+        <button id="btn-cancel-export" class="btn secondary" data-i18n="btn_cancel"></button>
+        <button id="btn-confirm-export" class="btn primary" data-i18n="export_go"></button>
+      </div>
+      <div id="export-status" class="status-line"></div>
     </div>
   </div>
 
