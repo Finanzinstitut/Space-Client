@@ -346,17 +346,100 @@ pub async fn import_modpack(
     let has_modrinth = archive.by_name("modrinth.index.json").is_ok();
     let has_curseforge = archive.by_name("manifest.json").is_ok();
     let has_norisk = archive.by_name("profile.json").is_ok();
+    let has_spc = archive.by_name(crate::launcher::export::SPC_INDEX).is_ok();
 
     let opts = ImportOptions { install_client_mod, install_cosmetica };
 
     match ext.as_str() {
+        _ if has_spc => import_spc(app, cfg, &mut archive, parent_path, opts).await,
         _ if has_modrinth => import_modrinth(app, cfg, &mut archive, parent_path, opts).await,
         _ if has_norisk => import_norisk(app, cfg, &mut archive, parent_path, opts).await,
         _ if has_curseforge => import_curseforge(app, cfg, &mut archive, parent_path, opts).await,
         _ => anyhow::bail!(
-            "Unrecognised modpack. Expected a Modrinth .mrpack, a NoRisk .noriskpack/.nrc, or a CurseForge .zip with a manifest.json."
+            "Unrecognised modpack. Expected a Space Client .spc, a Modrinth .mrpack, a NoRisk .noriskpack/.nrc, or a CurseForge .zip with a manifest.json."
         ),
     }
+}
+
+/// A Space Client pack: the instance as it was, files and all, so nothing has
+/// to be downloaded except the game itself.
+async fn import_spc(
+    app: &AppHandle,
+    cfg: &LauncherConfig,
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    parent_path: String,
+    opts: ImportOptions,
+) -> anyhow::Result<ImportResult> {
+    use crate::launcher::export::{SPC_FILES, SPC_FORMAT, SPC_INDEX};
+
+    let raw = read_zip_entry(archive, SPC_INDEX)
+        .ok_or_else(|| anyhow::anyhow!("{} is missing", SPC_INDEX))?;
+    let index: serde_json::Value = serde_json::from_slice(&raw)?;
+
+    let format = index.get("format").and_then(|v| v.as_u64()).unwrap_or(0);
+    if format == 0 || format > SPC_FORMAT as u64 {
+        anyhow::bail!("This pack was made by a newer Space Client. Update the launcher to import it.");
+    }
+    let text = |key: &str| index.get(key).and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    let mc_version = text("mc_version");
+    if mc_version.is_empty() {
+        anyhow::bail!("The pack does not say which Minecraft version it needs.");
+    }
+    let name = Some(text("name")).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "Imported pack".into());
+    let loader = Some(text("loader")).filter(|l| !l.is_empty()).unwrap_or_else(|| "vanilla".into());
+    let ram_mb = index
+        .get("ram_mb")
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32)
+        .filter(|v| *v >= 512)
+        .unwrap_or(cfg.max_ram_mb);
+
+    let inst = instance::create(
+        cfg,
+        name,
+        mc_version,
+        loader,
+        text("loader_version"),
+        ram_mb,
+        parent_path,
+        opts.install_client_mod,
+    )?;
+
+    let game_dir = inst.game_dir();
+    std::fs::create_dir_all(&game_dir)?;
+    let count = extract_overrides(archive, &game_dir, &[SPC_FILES])?;
+
+    // The launcher's record of which file is which project, kept for the files
+    // that actually arrived, so updates and icons work straight away.
+    if let Some(raw) = read_zip_entry(archive, "modrinth.json") {
+        if let Ok(list) = serde_json::from_slice::<Vec<crate::launcher::mods::InstalledMod>>(&raw) {
+            let kept: Vec<_> = list
+                .into_iter()
+                .filter(|m| {
+                    let dir = inst.content_dir(&m.project_type);
+                    dir.join(&m.filename).exists()
+                        || dir.join(format!("{}.disabled", m.filename)).exists()
+                })
+                .collect();
+            crate::launcher::mods::write_manifest(&inst, &kept).ok();
+        }
+    }
+
+    let mut note = String::new();
+    if count == 0 {
+        note.push_str("The pack carried no files. ");
+    }
+    finish_import(app, &inst, opts.install_cosmetica, &mut note).await;
+
+    emit_progress(app, InstallProgress {
+        stage: "done".into(),
+        current: 1,
+        total: 1,
+        file: String::new(),
+    });
+
+    Ok(ImportResult { instance: inst, skipped: Vec::new(), note })
 }
 
 async fn import_modrinth(

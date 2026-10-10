@@ -3,7 +3,7 @@ import { createSkinViewer, renderSkinFlat, renderCape } from "./skinrender.js";
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
-const { open } = window.__TAURI__.dialog;
+const { open, save } = window.__TAURI__.dialog;
 const shell = window.__TAURI__.shell;
 
 const $ = (id) => document.getElementById(id);
@@ -159,6 +159,149 @@ function stagger(nodes, step = 35) {
 }
 
 /*
+ * Dropdown lists drawn by the launcher instead of the system.
+ *
+ * A <select> opens a list the operating system draws, in the system's colours.
+ * On a machine set to light mode - and on Linux whatever the GTK theme says -
+ * that list came up white in the middle of a black window, which is the
+ * "suddenly white on some systems" people saw. The select element stays and
+ * keeps its value, its options and its change events, so nothing that reads
+ * or fills a select had to change; only the list it opens is ours now.
+ */
+const selectMenu = {
+  el: null,
+  select: null,
+  active: -1,
+};
+
+function closeSelectMenu() {
+  if (!selectMenu.el) return;
+  selectMenu.el.remove();
+  selectMenu.el = null;
+  if (selectMenu.select) selectMenu.select.classList.remove("select-open");
+  selectMenu.select = null;
+  selectMenu.active = -1;
+}
+
+function markSelectItem(index) {
+  const items = selectMenu.el ? [...selectMenu.el.children] : [];
+  items.forEach((item, i) => item.classList.toggle("active", i === index));
+  selectMenu.active = index;
+  if (items[index]) items[index].scrollIntoView({ block: "nearest" });
+}
+
+function chooseSelectItem(index) {
+  const select = selectMenu.select;
+  const option = select && select.options[index];
+  closeSelectMenu();
+  if (!option || option.disabled) return;
+  select.focus();
+  if (select.selectedIndex === index) return;
+  select.selectedIndex = index;
+  select.dispatchEvent(new Event("input", { bubbles: true }));
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function openSelectMenu(select) {
+  closeSelectMenu();
+  if (select.options.length === 0) return;
+
+  const menu = document.createElement("div");
+  menu.className = "select-menu";
+  [...select.options].forEach((option, i) => {
+    const item = document.createElement("div");
+    item.className = "select-item" + (option.disabled ? " disabled" : "") + (i === select.selectedIndex ? " selected" : "");
+    item.textContent = option.textContent;
+    item.addEventListener("mousedown", (e) => e.preventDefault());
+    item.addEventListener("click", () => chooseSelectItem(i));
+    item.addEventListener("mousemove", () => {
+      if (selectMenu.active !== i) markSelectItem(i);
+    });
+    menu.appendChild(item);
+  });
+  document.body.appendChild(menu);
+
+  // Below the field, or above it when the window ends first
+  const rect = select.getBoundingClientRect();
+  const room = window.innerHeight - rect.bottom - 8;
+  const height = Math.min(menu.scrollHeight, 300);
+  menu.style.left = rect.left + "px";
+  menu.style.minWidth = rect.width + "px";
+  menu.style.maxHeight = Math.max(120, room > height || room > rect.top ? room : rect.top - 8) + "px";
+  if (room < height && rect.top > room) {
+    menu.style.bottom = window.innerHeight - rect.top + 4 + "px";
+  } else {
+    menu.style.top = rect.bottom + 4 + "px";
+  }
+  // Kept inside the window on the right as well
+  const overflow = menu.getBoundingClientRect().right - (window.innerWidth - 8);
+  if (overflow > 0) menu.style.left = Math.max(8, rect.left - overflow) + "px";
+
+  selectMenu.el = menu;
+  selectMenu.select = select;
+  select.classList.add("select-open");
+  markSelectItem(Math.max(0, select.selectedIndex));
+}
+
+document.addEventListener(
+  "mousedown",
+  (e) => {
+    if (selectMenu.el && selectMenu.el.contains(e.target)) return;
+    const select = e.target.closest && e.target.closest("select");
+    if (!select || select.disabled || select.multiple || select.size > 1) {
+      closeSelectMenu();
+      return;
+    }
+    e.preventDefault();
+    if (selectMenu.select === select) {
+      closeSelectMenu();
+    } else {
+      select.focus();
+      openSelectMenu(select);
+    }
+  },
+  true
+);
+
+document.addEventListener(
+  "keydown",
+  (e) => {
+    if (selectMenu.el) {
+      const count = selectMenu.select.options.length;
+      if (e.key === "ArrowDown") markSelectItem(Math.min(count - 1, selectMenu.active + 1));
+      else if (e.key === "ArrowUp") markSelectItem(Math.max(0, selectMenu.active - 1));
+      else if (e.key === "Enter" || e.key === " ") chooseSelectItem(selectMenu.active);
+      else if (e.key === "Escape" || e.key === "Tab") closeSelectMenu();
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    // The keys that would open the system's list open ours instead
+    const select = e.target;
+    if (
+      select instanceof HTMLSelectElement &&
+      !select.disabled &&
+      (e.key === " " || e.key === "Enter" || (e.altKey && e.key === "ArrowDown"))
+    ) {
+      e.preventDefault();
+      openSelectMenu(select);
+    }
+  },
+  true
+);
+
+// A list left floating where its field used to be is worse than no list
+window.addEventListener("resize", closeSelectMenu);
+document.addEventListener(
+  "scroll",
+  (e) => {
+    if (selectMenu.el && !selectMenu.el.contains(e.target)) closeSelectMenu();
+  },
+  true
+);
+
+/*
  * Die Klassen, die ein Statusfeld schon hatte, bevor hier zum ersten Mal etwas
  * hineingeschrieben wurde.
  *
@@ -305,6 +448,13 @@ function renderInstances() {
       await invoke("delete_instance", { id: inst.id, deleteFiles: true });
       await refreshInstances();
     };
+    const exportBtn = document.createElement("button");
+    exportBtn.className = "btn icon-btn small";
+    exportBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M12 15V3.5"/><path d="m7.5 8 4.5-4.5L16.5 8"/><path d="M4.5 13.5v4.7A1.8 1.8 0 0 0 6.3 20h11.4a1.8 1.8 0 0 0 1.8-1.8v-4.7"/></svg>';
+    exportBtn.title = t("btn_export");
+    exportBtn.onclick = () => openExportModal(inst);
+
+    actions.appendChild(exportBtn);
     actions.appendChild(editBtn);
     actions.appendChild(delBtn);
 
@@ -1103,8 +1253,239 @@ $("btn-console-kill").addEventListener("click", async () => {
   }
 });
 
+// ---------------- instance export ----------------
+//
+// The tree is loaded a folder at a time. What is ticked is kept as decisions:
+// a path set on or off, inherited by everything below it until something
+// below says otherwise. Ticking a folder clears the decisions inside it, so
+// "this folder" always means all of it.
+const exportState = {
+  inst: null,
+  children: new Map(), // folder path ("" for the root) -> nodes
+  open: new Set(),
+  decisions: new Map(),
+  defaults: new Map(), // top-level name -> default_on
+  busy: false,
+};
+
+function humanBytes(n) {
+  if (n < 1024) return n + " B";
+  const units = ["KB", "MB", "GB"];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return (v >= 10 ? v.toFixed(0) : v.toFixed(1)) + " " + units[i];
+}
+
+function exportDecided(path) {
+  let p = path;
+  for (;;) {
+    if (exportState.decisions.has(p)) return exportState.decisions.get(p);
+    const cut = p.lastIndexOf("/");
+    if (cut < 0) break;
+    p = p.slice(0, cut);
+  }
+  return exportState.defaults.get(path.split("/")[0]) === true;
+}
+
+function exportMixedBelow(path) {
+  const own = exportDecided(path);
+  for (const [key, value] of exportState.decisions) {
+    if (key.startsWith(path + "/") && value !== own) return true;
+  }
+  return false;
+}
+
+function exportSet(path, on) {
+  for (const key of [...exportState.decisions.keys()]) {
+    if (key.startsWith(path + "/")) exportState.decisions.delete(key);
+  }
+  exportState.decisions.set(path, on);
+}
+
+/// What goes to the backend: whole folders where nothing inside differs,
+/// single entries where something does.
+function exportPicks(parent = "") {
+  const picks = [];
+  let files = 0;
+  let size = 0;
+  for (const node of exportState.children.get(parent) || []) {
+    if (node.is_dir && exportMixedBelow(node.path) && exportState.children.has(node.path)) {
+      const inner = exportPicks(node.path);
+      picks.push(...inner.picks);
+      files += inner.files;
+      size += inner.size;
+    } else if (exportDecided(node.path)) {
+      picks.push(node.path);
+      files += 1;
+      size += node.size;
+    }
+  }
+  return { picks, files, size };
+}
+
+async function exportLoad(path) {
+  if (exportState.children.has(path)) return;
+  const nodes = await invoke("export_list", { id: exportState.inst.id, path });
+  exportState.children.set(path, nodes);
+  if (path === "") {
+    exportState.defaults = new Map(nodes.map((n) => [n.name, n.default_on]));
+  }
+}
+
+function renderExportTree() {
+  const tree = $("export-tree");
+  const scroll = tree.scrollTop;
+  tree.innerHTML = "";
+
+  const addRows = (parent, depth) => {
+    const nodes = exportState.children.get(parent) || [];
+    if (nodes.length === 0 && parent !== "") {
+      const empty = document.createElement("div");
+      empty.className = "export-row empty";
+      empty.style.paddingLeft = 12 + depth * 18 + "px";
+      empty.textContent = t("export_empty_dir");
+      tree.appendChild(empty);
+      return;
+    }
+    for (const node of nodes) {
+      const row = document.createElement("div");
+      row.className = "export-row" + (node.is_dir ? " dir" : "");
+      row.style.paddingLeft = 12 + depth * 18 + "px";
+
+      const twisty = document.createElement("button");
+      twisty.className = "export-twisty";
+      if (node.is_dir) {
+        twisty.textContent = exportState.open.has(node.path) ? "\u25BE" : "\u25B8";
+        twisty.onclick = async () => {
+          if (exportState.open.has(node.path)) {
+            exportState.open.delete(node.path);
+          } else {
+            await exportLoad(node.path);
+            exportState.open.add(node.path);
+          }
+          renderExportTree();
+        };
+      } else {
+        twisty.disabled = true;
+      }
+
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = exportDecided(node.path);
+      box.indeterminate = node.is_dir && exportMixedBelow(node.path);
+      box.onchange = () => {
+        exportSet(node.path, box.checked);
+        renderExportTree();
+      };
+
+      const name = document.createElement("span");
+      name.className = "export-name";
+      name.textContent = node.name;
+      name.onclick = () => box.click();
+
+      const size = document.createElement("span");
+      size.className = "export-size";
+      size.textContent = humanBytes(node.size);
+
+      row.append(twisty, box, name, size);
+      tree.appendChild(row);
+
+      if (node.is_dir && exportState.open.has(node.path)) addRows(node.path, depth + 1);
+    }
+  };
+  addRows("", 0);
+  tree.scrollTop = scroll;
+
+  const { picks, size } = exportPicks();
+  $("export-summary").textContent = t("export_summary", { files: picks.length, size: humanBytes(size) });
+}
+
+async function openExportModal(inst) {
+  exportState.inst = inst;
+  exportState.children = new Map();
+  exportState.open = new Set();
+  exportState.decisions = new Map();
+  exportState.busy = false;
+
+  const loader = inst.loader === "vanilla" ? "Vanilla" : inst.loader.charAt(0).toUpperCase() + inst.loader.slice(1);
+  $("export-sub").textContent = t("export_sub", { name: inst.name, mc: inst.mc_version, loader });
+  setStatus("export-status", "");
+  $("btn-confirm-export").disabled = false;
+  $("export-tree").innerHTML = "";
+  $("export-backdrop").classList.remove("hidden");
+
+  try {
+    await exportLoad("");
+    renderExportTree();
+  } catch (e) {
+    setStatus("export-status", String(e), "error");
+  }
+}
+
+function closeExportModal() {
+  if (exportState.busy) return;
+  $("export-backdrop").classList.add("hidden");
+}
+
+$("btn-cancel-export").addEventListener("click", closeExportModal);
+
+$("btn-export-all").addEventListener("click", () => {
+  exportState.decisions = new Map();
+  for (const node of exportState.children.get("") || []) exportState.decisions.set(node.path, true);
+  renderExportTree();
+});
+$("btn-export-none").addEventListener("click", () => {
+  exportState.decisions = new Map();
+  for (const node of exportState.children.get("") || []) exportState.decisions.set(node.path, false);
+  renderExportTree();
+});
+$("btn-export-default").addEventListener("click", () => {
+  exportState.decisions = new Map();
+  renderExportTree();
+});
+
+$("btn-confirm-export").addEventListener("click", async () => {
+  const inst = exportState.inst;
+  if (!inst || exportState.busy) return;
+  const { picks } = exportPicks();
+  if (picks.length === 0) {
+    setStatus("export-status", t("export_nothing"), "error");
+    return;
+  }
+  const format = document.querySelector('input[name="export-format"]:checked').value;
+  const safeName = inst.name.replace(/[\\/:*?"<>|]+/g, "_").trim() || "instance";
+
+  const dest = await save({
+    title: t("export_choose"),
+    defaultPath: `${safeName}.${format}`,
+    filters: [{ name: format === "spc" ? "Space Client" : "Modrinth", extensions: [format] }],
+  });
+  if (!dest) return;
+
+  exportState.busy = true;
+  $("btn-confirm-export").disabled = true;
+  setStatus("export-status", t("export_running"));
+  try {
+    const report = await invoke("export_instance", { id: inst.id, paths: picks, format, dest });
+    setStatus(
+      "export-status",
+      t("export_done", { path: report.path, files: report.files, linked: report.linked }),
+      "success"
+    );
+  } catch (e) {
+    setStatus("export-status", String(e), "error");
+  } finally {
+    exportState.busy = false;
+    $("btn-confirm-export").disabled = false;
+  }
+});
+
 // ---------------- modpack import ----------------
-const PACK_EXTENSIONS = ["mrpack", "noriskpack", "nrc", "zip"];
+const PACK_EXTENSIONS = ["spc", "mrpack", "noriskpack", "nrc", "zip"];
 
 async function importModpack(archivePath) {
   const fileName = archivePath.split(/[\\/]/).pop();

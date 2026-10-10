@@ -461,6 +461,27 @@ async fn import_modpack(
 }
 
 #[tauri::command]
+async fn export_list(id: String, path: String) -> Result<Vec<launcher::export::ExportNode>, String> {
+    tauri::async_runtime::spawn_blocking(move || launcher::export::list(&id, &path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn export_instance(
+    app: tauri::AppHandle,
+    id: String,
+    paths: Vec<String>,
+    format: String,
+    dest: String,
+) -> Result<launcher::export::ExportReport, String> {
+    launcher::export::export(&app, &id, paths, &format, dest)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn delete_instance(id: String, delete_files: bool) -> Result<(), String> {
     instance::delete(&id, delete_files).map_err(|e| e.to_string())
 }
@@ -1300,6 +1321,22 @@ fn open_folder(dir: &std::path::Path) -> Result<(), String> {
 }
 
 fn main() {
+    // WebKitGTK's DMA-BUF renderer leaves the whole window blank white on a
+    // good share of Linux machines - NVIDIA drivers and some Wayland sessions
+    // above all. Turning it off costs nothing visible elsewhere. Only set when
+    // the user has not chosen for themselves.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+    // The file dialogs are GTK windows of their own and follow the desktop's
+    // theme, which put a white dialog over the black launcher. Dark unless
+    // the user has picked a GTK theme on purpose.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("GTK_THEME").is_none() {
+        std::env::set_var("GTK_THEME", "Adwaita:dark");
+    }
+
     let config = LauncherConfig::load();
     config.ensure_dirs().ok();
 
@@ -1343,6 +1380,8 @@ fn main() {
             create_instance,
             update_instance,
             import_modpack,
+            export_list,
+            export_instance,
             delete_instance,
             open_instance_folder,
             install_instance,

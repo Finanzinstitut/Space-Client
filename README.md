@@ -10,7 +10,8 @@ A custom Minecraft: Java Edition launcher with a space theme, built with **Tauri
 - **The Space Client companion mod** is installed automatically into every Fabric and Quilt instance running **Minecraft 1.21.11, 26.1, 26.2 or 26.3** (each gets the build made for its version) — the create-instance dialog says plainly, in red, when the chosen combination cannot load it, including imported modpacks, and refreshed from its own GitHub releases. Each instance has a toggle to opt out. Forge and NeoForge instances skip it, since it is a Fabric mod.
 - **Skin and cape manager**: shows the account's current skin as a full body render, takes a new one by drag and drop or file picker, switches between the Classic and Slim models, and lets you pick from whichever capes the account actually owns. Microsoft accounts only — Mojang's API has no equivalent for offline profiles.
 - **Live console** (optional, in Settings): opens when a game starts, streams stdout and stderr in the launcher's own styling, and can kill an instance that hangs without going to Task Manager.
-- **Modpack import** by button or drag and drop. Modrinth `.mrpack` and NoRisk `.noriskpack` files import fully — Minecraft version, loader, memory setting, every mod, resource pack and shader, plus the pack's overrides. Imported content is registered so it joins the normal update checks.
+- **Instance export** from the export button on each instance. A tree of `.minecraft` with a tick per folder and file (recommended selection, all files, or none), saved as a Space Client pack `.spc` — everything in one file, imports back exactly as it was without downloading anything — or as a Modrinth `.mrpack`, where mods Modrinth hosts are listed by hash and download link and everything else goes into the overrides.
+- **Modpack import** by button or drag and drop. Space Client `.spc`, Modrinth `.mrpack` and NoRisk `.noriskpack` files import fully — Minecraft version, loader, memory setting, every mod, resource pack and shader, plus the pack's overrides. Imported content is registered so it joins the normal update checks.
 - **Pick the exact loader build** when creating or editing an instance, or leave it on automatic to get the newest stable one.
 - **Every Minecraft version**, pulled live from Mojang's official version manifest (releases, snapshots, betas, alphas).
 - **Mod loaders**: Fabric, Quilt, Forge and NeoForge. Fabric and Quilt install from their meta profiles; Forge and NeoForge run their official installers headlessly, because their bytecode-patching processors cannot be reproduced from a profile alone.
@@ -104,7 +105,8 @@ space-client/
 │           ├── instance.rs     # instance registry and folders
 │           ├── loader.rs       # Fabric / Quilt installation
 │           ├── mods.rs         # Modrinth search, versions, packs, shaders
-│           ├── modpack.rs      # .mrpack / CurseForge / .nrc import
+│           ├── export.rs       # .spc / .mrpack export
+│           ├── modpack.rs      # .spc / .mrpack / CurseForge / .nrc import
 │           ├── java.rs         # automatic JRE download
 │           ├── manifest.rs     # Mojang version manifest
 │           ├── download.rs     # client, libraries, assets
