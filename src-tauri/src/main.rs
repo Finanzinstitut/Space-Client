@@ -806,6 +806,13 @@ async fn launch_instance(
         }
     }
 
+    // Shared keybinds, server list and Space Client setup, put in place while
+    // nothing is reading them
+    {
+        let running: Vec<String> = state.running.lock().unwrap().keys().cloned().collect();
+        launcher::settings_sync::before_launch(&cfg, &inst, &running);
+    }
+
     let join = launcher::serverprofiles::auto_join_address(&id);
 
     let child = launcher::launch::launch_instance(&app, &cfg, &inst, &account, join.as_deref())
@@ -819,6 +826,7 @@ async fn launch_instance(
     let running = state.running.clone();
     let app_clone = app.clone();
     let watch_id = id.clone();
+    let sync_cfg = cfg.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_millis(500));
         let mut map = match running.lock() {
@@ -829,6 +837,10 @@ async fn launch_instance(
             Some(child) => match child.try_wait() {
                 Ok(Some(status)) => {
                     map.remove(&watch_id);
+                    drop(map);
+                    // What the source instance changed this session becomes
+                    // the shared setup now, not at the next launch
+                    launcher::settings_sync::after_exit(&sync_cfg, &watch_id);
                     let _ = app_clone.emit(
                         "game://exit",
                         GameExit {
@@ -886,6 +898,43 @@ async fn set_appearance(
     cfg.bg_animation = bg_animation;
     cfg.save().map_err(|e| e.to_string())?;
     Ok(cfg.clone())
+}
+
+/// Shared settings: what is synced, from where, and when it was last taken.
+#[tauri::command]
+fn get_sync_status(state: State<'_, AppState>) -> launcher::settings_sync::SyncStatus {
+    let cfg = state.config.lock().unwrap().clone();
+    launcher::settings_sync::status(&cfg)
+}
+
+#[tauri::command]
+fn set_sync(
+    enabled: bool,
+    source: String,
+    state: State<'_, AppState>,
+) -> Result<launcher::settings_sync::SyncStatus, String> {
+    let mut cfg = state.config.lock().unwrap();
+    cfg.sync_settings = enabled;
+    cfg.sync_source = if source.trim().is_empty() { "auto".into() } else { source };
+    cfg.save().map_err(|e| e.to_string())?;
+    Ok(launcher::settings_sync::status(&cfg))
+}
+
+#[tauri::command]
+fn open_shared_settings(state: State<'_, AppState>) -> Result<(), String> {
+    let cfg = state.config.lock().unwrap().clone();
+    let dir = launcher::settings_sync::shared_dir(&cfg);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    open_folder(&dir)
+}
+
+/// Takes the settings from the source now and gives them to every instance
+/// that is not running. Returns how many received them.
+#[tauri::command]
+fn sync_now(state: State<'_, AppState>) -> Result<u32, String> {
+    let cfg = state.config.lock().unwrap().clone();
+    let running: Vec<String> = state.running.lock().unwrap().keys().cloned().collect();
+    launcher::settings_sync::sync_all(&cfg, &running).map_err(|e| e.to_string())
 }
 
 /// Opens the installed Minecraft Bedrock. No instance, no account check and no
@@ -1409,6 +1458,10 @@ fn main() {
             bedrock_info,
             set_edition,
             set_appearance,
+            get_sync_status,
+            set_sync,
+            sync_now,
+            open_shared_settings,
             launch_bedrock,
             install_bedrock_pack,
             remove_bedrock_pack,

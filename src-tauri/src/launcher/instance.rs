@@ -42,6 +42,10 @@ pub struct Instance {
     /// that opens on whatever happened to be written first.
     #[serde(default)]
     pub last_played: u64,
+    /// How many times it was started. What "the instance played most" means
+    /// when shared settings are taken from it.
+    #[serde(default)]
+    pub play_count: u32,
 }
 
 impl Instance {
@@ -219,6 +223,7 @@ pub fn create(
         created: format!("{}", chrono_now()),
         // Never launched yet, so it sorts below anything that has.
         last_played: 0,
+        play_count: 0,
     };
 
     // A copy of the metadata lives inside the folder too, so an instance
@@ -272,6 +277,7 @@ pub fn mark_played(id: &str) {
     for inst in all.iter_mut() {
         if inst.id == id {
             inst.last_played = now;
+            inst.play_count = inst.play_count.saturating_add(1);
             touched = true;
         }
     }

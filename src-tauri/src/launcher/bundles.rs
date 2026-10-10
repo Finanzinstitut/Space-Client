@@ -479,6 +479,7 @@ mod gate_tests {
             install_client_mod: true,
             created: String::new(),
             last_played: 0,
+            play_count: 0,
         }
     }
 
