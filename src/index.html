@@ -623,6 +623,45 @@
           </div>
         </div>
 
+        <!--
+          One set of keybinds, server list and Space Client setup for every
+          instance, taken from one of them. See settings_sync.rs.
+        -->
+        <div class="set-group">
+          <div class="set-head" data-i18n="group_sync"></div>
+
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_sync"></div>
+              <div class="set-desc" data-i18n="sync_hint"></div>
+            </div>
+            <label class="set-control">
+              <input type="checkbox" id="sync-settings" class="switch" />
+            </label>
+          </div>
+
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_sync_source"></div>
+              <div class="set-desc" id="sync-status"></div>
+            </div>
+            <div class="set-control">
+              <select id="sync-source"></select>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <div class="set-text">
+              <div class="set-name" data-i18n="field_sync_now"></div>
+              <div class="set-desc" id="sync-files"></div>
+            </div>
+            <div class="set-control row">
+              <button id="btn-sync-folder" class="btn secondary small" data-i18n="sync_open_folder"></button>
+              <button id="btn-sync-now" class="btn primary small" data-i18n="sync_now"></button>
+            </div>
+          </div>
+        </div>
+
         <div class="set-group">
           <div class="set-head" data-i18n="group_client"></div>
 

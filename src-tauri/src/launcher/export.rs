@@ -579,6 +579,7 @@ mod tests {
             install_client_mod: true,
             created: String::new(),
             last_played: 0,
+            play_count: 0,
         };
         let files = vec![
             ("mods/a.jar".to_string(), PathBuf::new()),

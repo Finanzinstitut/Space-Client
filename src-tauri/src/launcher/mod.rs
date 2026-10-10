@@ -20,6 +20,7 @@ pub mod mods;
 pub mod progress;
 pub mod serverlist;
 pub mod serverprofiles;
+pub mod settings_sync;
 pub mod skin;
 pub mod skinlib;
 pub mod update;

@@ -476,6 +476,7 @@ function renderInstances() {
 async function refreshInstances() {
   instances = await invoke("list_instances");
   renderInstances();
+  renderSync();
   renderModsInstanceOptions();
   renderSpInstanceOptions();
   renderWbInstanceOptions();
@@ -1224,6 +1225,8 @@ const killedByUser = new Set();
 // behind but a closed window and no idea what to send anyone.
 listen("game://exit", (event) => {
   const p = event.payload;
+  // The source may just have handed its settings to the shared folder
+  renderSync();
   const killed = killedByUser.delete(p.instance_id);
   if (p.code != null && p.code !== 0 && !killed) {
     setStatus("global-status", t("game_crashed", { code: p.code }), "error");
@@ -2719,6 +2722,69 @@ async function saveAppearance(theme, animated) {
 }
 
 $("bg-animation").addEventListener("change", (e) => saveAppearance(currentTheme(), e.target.checked));
+
+// ---------------- shared settings ----------------
+
+async function renderSync() {
+  let st;
+  try {
+    st = await invoke("get_sync_status");
+  } catch (e) {
+    setStatus("sync-status", String(e), "error");
+    return;
+  }
+  $("sync-settings").checked = st.enabled;
+
+  const select = $("sync-source");
+  select.innerHTML = "";
+  const auto = document.createElement("option");
+  auto.value = "auto";
+  auto.textContent = st.source === "auto" && st.source_name
+    ? t("sync_source_auto_named", { name: st.source_name })
+    : t("sync_source_auto");
+  select.appendChild(auto);
+  for (const inst of sortedInstances()) {
+    const opt = document.createElement("option");
+    opt.value = inst.id;
+    opt.textContent = `${inst.name} (${inst.mc_version})`;
+    select.appendChild(opt);
+  }
+  select.value = st.source === "auto" || !instances.some((i) => i.id === st.source) ? "auto" : st.source;
+  select.disabled = !st.enabled;
+  $("btn-sync-now").disabled = !st.enabled;
+
+  setStatus("sync-status", st.source_name
+    ? t("sync_status_from", { name: st.source_name })
+    : t("sync_status_none"));
+
+  const present = st.files.filter((f) => f.present).map((f) => f.path.replace(/^config\//, ""));
+  setStatus("sync-files", present.length
+    ? t("sync_files", { files: present.join(", ") })
+    : t("sync_files_none"));
+}
+
+async function saveSync() {
+  try {
+    await invoke("set_sync", { enabled: $("sync-settings").checked, source: $("sync-source").value });
+  } catch (e) {
+    setStatus("sync-status", String(e), "error");
+  }
+  renderSync();
+}
+
+$("sync-settings").addEventListener("change", saveSync);
+$("sync-source").addEventListener("change", saveSync);
+$("btn-sync-folder").addEventListener("click", () =>
+  invoke("open_shared_settings").catch((e) => setStatus("sync-status", String(e), "error")));
+$("btn-sync-now").addEventListener("click", async () => {
+  try {
+    const count = await invoke("sync_now");
+    await renderSync();
+    setStatus("sync-files", t("sync_done", { count }), "success");
+  } catch (e) {
+    setStatus("sync-files", String(e), "error");
+  }
+});
 
 // ---------------- settings ----------------
 $("btn-pick-path").addEventListener("click", async () => {

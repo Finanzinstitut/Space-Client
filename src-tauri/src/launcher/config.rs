@@ -89,6 +89,18 @@ pub struct LauncherConfig {
     /// The animated background that goes with the theme.
     #[serde(default = "default_true")]
     pub bg_animation: bool,
+    /// One set of options, server list and Space Client setup for every
+    /// instance - see settings_sync.rs.
+    #[serde(default = "default_true")]
+    pub sync_settings: bool,
+    /// Where those come from: "auto" for the most played instance, or an
+    /// instance id.
+    #[serde(default = "default_sync_source")]
+    pub sync_source: String,
+}
+
+fn default_sync_source() -> String {
+    "auto".to_string()
 }
 
 fn default_theme() -> String {
@@ -131,6 +143,8 @@ impl Default for LauncherConfig {
             curseforge_key: String::new(),
             theme: default_theme(),
             bg_animation: true,
+            sync_settings: true,
+            sync_source: default_sync_source(),
             edition: default_edition(),
         }
     }
