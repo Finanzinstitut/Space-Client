@@ -176,8 +176,49 @@ const NEOFORGE_META: &str =
     "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml";
 const NEOFORGE_MAVEN: &str = "https://maven.neoforged.net/releases/net/neoforged/neoforge";
 
-/// Forge publishes a "recommended" and a "latest" build per Minecraft version.
+const FORGE_META: &str = "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml";
+
+/// Every Forge build for a Minecraft version, recommended first.
+///
+/// Forge's promotions name a "recommended" and a "latest" build, and that was
+/// all the launcher offered - two choices, and none at all for a version Forge
+/// has builds for but no promotion. The maven metadata lists every build; the
+/// promotions only decide which one comes first.
 pub async fn list_forge_versions(mc_version: &str) -> anyhow::Result<Vec<LoaderVersion>> {
+    let promoted = list_forge_promotions(mc_version).await.unwrap_or_default();
+
+    let xml = http()?.get(FORGE_META).send().await?.error_for_status()?.text().await?;
+    let prefix = format!("{}-", mc_version);
+    let mut builds: Vec<String> = xml
+        .split("<version>")
+        .skip(1)
+        .filter_map(|chunk| chunk.split("</version>").next())
+        .map(|v| v.trim())
+        .filter(|v| v.starts_with(&prefix))
+        .map(|v| v[prefix.len()..].to_string())
+        // Forge's own suffixes for one-off builds against a pre-release
+        .filter(|v| !v.contains('-'))
+        .collect();
+    sort_newest_first(&mut builds);
+
+    let mut out: Vec<LoaderVersion> = promoted.into_iter().filter(|p| p.stable).collect();
+    for b in builds {
+        if !out.iter().any(|l| l.version == b) {
+            out.push(LoaderVersion { version: b, stable: false });
+        }
+    }
+    // With no recommended build, the newest one is the sensible default
+    if !out.is_empty() && !out.iter().any(|l| l.stable) {
+        out[0].stable = true;
+    }
+    if out.is_empty() {
+        anyhow::bail!("Forge has no build for Minecraft {}", mc_version);
+    }
+    Ok(out)
+}
+
+/// Forge publishes a "recommended" and a "latest" build per Minecraft version.
+async fn list_forge_promotions(mc_version: &str) -> anyhow::Result<Vec<LoaderVersion>> {
     let json: serde_json::Value = http()?
         .get(FORGE_PROMOTIONS)
         .send()
@@ -214,15 +255,37 @@ pub async fn list_forge_versions(mc_version: &str) -> anyhow::Result<Vec<LoaderV
     Ok(out)
 }
 
-/// NeoForge versions encode the Minecraft version: 1.21.1 -> 21.1.x
+/// NeoForge versions encode the Minecraft version they are for.
+///
+/// Up to 1.21 the leading "1." is dropped: 1.21.11 -> 21.11.x. From 26.1 on,
+/// with Minecraft's year-based numbers, the whole version is kept and the
+/// patch written out: 26.1 -> 26.1.0.x, 26.1.2 -> 26.1.2.x. The old reading
+/// only knew the first shape and found nothing at all for 26.x.
 fn neoforge_prefix(mc_version: &str) -> Option<String> {
     let parts: Vec<&str> = mc_version.split('.').collect();
-    if parts.len() < 2 || parts[0] != "1" {
+    if parts.len() < 2 || parts.iter().any(|p| p.parse::<u32>().is_err()) {
         return None;
     }
-    let minor = parts[1];
     let patch = parts.get(2).copied().unwrap_or("0");
-    Some(format!("{}.{}", minor, patch))
+    if parts[0] == "1" {
+        Some(format!("{}.{}", parts[1], patch))
+    } else {
+        Some(format!("{}.{}.{}", parts[0], parts[1], patch))
+    }
+}
+
+/// Orders loader versions newest first by their numbers, not by the order a
+/// metadata file happens to list them in. Pre-release tags sort below the
+/// same numbers without one.
+fn sort_newest_first(versions: &mut [String]) {
+    let key = |v: &String| -> (Vec<u64>, bool) {
+        let (numbers, tag) = match v.split_once('-') {
+            Some((n, _)) => (n, true),
+            None => (v.as_str(), false),
+        };
+        (numbers.split('.').map(|p| p.parse::<u64>().unwrap_or(0)).collect(), !tag)
+    };
+    versions.sort_by(|a, b| key(b).cmp(&key(a)));
 }
 
 /// Reads NeoForge's maven-metadata.xml. Pulling in a full XML parser for one
@@ -246,24 +309,27 @@ pub async fn list_neoforge_versions(mc_version: &str) -> anyhow::Result<Vec<Load
         }
     }
 
-    // Newest first
     let mut matching: Vec<String> = all
         .into_iter()
         .filter(|v| v.starts_with(&format!("{}.", prefix)))
         .collect();
-    matching.reverse();
+    sort_newest_first(&mut matching);
 
     if matching.is_empty() {
         anyhow::bail!("NeoForge has no build for Minecraft {}", mc_version);
     }
 
-    Ok(matching
+    // Stable builds first, then betas - for a version that has only betas
+    // (26.3 at the moment) the newest beta is what gets picked
+    let mut out: Vec<LoaderVersion> = matching
         .into_iter()
         .map(|v| {
             let stable = !v.contains("beta") && !v.contains("alpha");
             LoaderVersion { version: v, stable }
         })
-        .collect())
+        .collect();
+    out.sort_by_key(|l| !l.stable);
+    Ok(out)
 }
 
 /// The installer refuses to run without a launcher_profiles.json in the target
@@ -447,5 +513,32 @@ pub async fn list_versions_for(loader: &str, mc_version: &str) -> anyhow::Result
         "forge" => list_forge_versions(mc_version).await,
         "neoforge" => list_neoforge_versions(mc_version).await,
         _ => Ok(vec![]),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn neoforge_numbers_for_both_kinds_of_minecraft_version() {
+        assert_eq!(neoforge_prefix("1.21.11").as_deref(), Some("21.11"));
+        assert_eq!(neoforge_prefix("1.21").as_deref(), Some("21.0"));
+        assert_eq!(neoforge_prefix("26.1").as_deref(), Some("26.1.0"));
+        assert_eq!(neoforge_prefix("26.1.2").as_deref(), Some("26.1.2"));
+        assert_eq!(neoforge_prefix("26.3").as_deref(), Some("26.3.0"));
+        assert_eq!(neoforge_prefix("26w14a"), None);
+    }
+
+    #[test]
+    fn newest_first_by_number_not_by_listing() {
+        let mut v = vec![
+            "26.3.0.9-beta".to_string(),
+            "26.3.0.65-beta".to_string(),
+            "26.3.0.64".to_string(),
+            "26.3.0.100-beta".to_string(),
+        ];
+        sort_newest_first(&mut v);
+        assert_eq!(v, vec!["26.3.0.100-beta", "26.3.0.65-beta", "26.3.0.64", "26.3.0.9-beta"]);
     }
 }

@@ -1803,7 +1803,7 @@ $("new-snapshots").addEventListener("change", () => {
 /// launcher picks the build that matches the instance; any other version
 /// silently gets an instance without it, so say so up front.
 const HUD_MC_SERIES = ["1.21.11", "26.1", "26.2", "26.3"];
-const HUD_LOADERS = ["fabric", "quilt"];
+const HUD_LOADERS = ["fabric", "quilt", "neoforge", "forge"];
 
 function updateHudCompatNote() {
   const note = $("hud-compat-note");
