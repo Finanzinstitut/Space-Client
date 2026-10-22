@@ -35,13 +35,24 @@ pub async fn list_loader_versions(loader: &str, mc_version: &str) -> anyhow::Res
     if let Some(arr) = list.as_array() {
         for item in arr {
             if let Some(v) = item.pointer("/loader/version").and_then(|v| v.as_str()) {
+                // Quilt's meta has no stable flag and lists betas first, so the
+                // first entry was an old beta. A version without a pre-release
+                // tag is a release there.
                 let stable = item
                     .pointer("/loader/stable")
                     .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                    .unwrap_or_else(|| !v.contains('-'));
                 out.push(LoaderVersion { version: v.to_string(), stable });
             }
         }
+    }
+    if loader == "quilt" {
+        let mut names: Vec<String> = out.iter().map(|l| l.version.clone()).collect();
+        sort_newest_first(&mut names);
+        out = names
+            .into_iter()
+            .map(|v| LoaderVersion { stable: !v.contains('-'), version: v })
+            .collect();
     }
     Ok(out)
 }
@@ -540,5 +551,24 @@ mod tests {
         ];
         sort_newest_first(&mut v);
         assert_eq!(v, vec!["26.3.0.100-beta", "26.3.0.65-beta", "26.3.0.64", "26.3.0.9-beta"]);
+    }
+
+    /// Asks the real servers, so it is not part of the normal run:
+    /// cargo test live_loader_lists -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn live_loader_lists() {
+        for mc in ["1.21.11", "26.1", "26.1.2", "26.2", "26.3"] {
+            for loader in ["fabric", "quilt", "neoforge", "forge"] {
+                match list_versions_for(loader, mc).await {
+                    Ok(list) => {
+                        let pick = list.iter().find(|l| l.stable).or(list.first());
+                        println!("{mc:8} {loader:9} {:4} builds, picks {:?}", list.len(),
+                                 pick.map(|l| &l.version));
+                    }
+                    Err(e) => println!("{mc:8} {loader:9} ERROR {e}"),
+                }
+            }
+        }
     }
 }
