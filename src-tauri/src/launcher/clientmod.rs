@@ -798,4 +798,31 @@ versionRange="[26.3,26.4)"
         assert_eq!(toml_mod_version(toml).as_deref(), Some("1.57.0"));
         assert_eq!(toml_dependency_range(toml, "minecraft").as_deref(), Some("[26.3,26.4)"));
     }
+
+    /// The jars a mod build actually produced, read the way an install reads
+    /// them. Needs them in a folder: SPACE_MOD_JARS=<dir> cargo test -- --ignored
+    #[test]
+    #[ignore]
+    fn built_jars_are_read_right() {
+        let dir = std::env::var("SPACE_MOD_JARS").expect("SPACE_MOD_JARS");
+        let mut seen = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            let (mc, flavour) = parse_name(&name);
+            let mc = mc.expect("the name carries the Minecraft version");
+            let meta = read_metadata(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(meta.flavour, flavour, "{name}");
+            assert!(meta.version.is_some(), "{name}");
+            let range = meta.minecraft.clone().expect("a Minecraft requirement");
+            let fits = |v: &str| {
+                if flavour == "fabric" { version_matches(&range, v) } else { maven_range_matches(&range, v) }
+            };
+            assert!(fits(&mc), "{name}: {range} should take {mc}");
+            assert!(fits(&format!("{mc}.1")) || mc.starts_with("1."), "{name}: {range} should take {mc}.1");
+            assert!(!fits("1.20.1"), "{name}: {range} should not take 1.20.1");
+            seen += 1;
+        }
+        assert!(seen > 0);
+    }
 }
