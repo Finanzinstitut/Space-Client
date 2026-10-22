@@ -20,8 +20,10 @@ use tauri::{Emitter, State};
 
 struct AppState {
     config: Mutex<LauncherConfig>,
-    /// Games currently running, so the live console can stop a stuck instance.
-    running: Arc<Mutex<HashMap<String, std::process::Child>>>,
+    /// Games currently running, by instance, so the live console can stop a
+    /// stuck one. A list per instance: the same instance can be started more
+    /// than once, and each copy is its own process with its own number.
+    running: Arc<Mutex<HashMap<String, Vec<(u64, std::process::Child)>>>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -481,6 +483,16 @@ async fn export_instance(
         .map_err(|e| e.to_string())
 }
 
+/// Copies an instance with everything in it. Off the async threads, because a
+/// copy of a few gigabytes of worlds takes a while.
+#[tauri::command]
+async fn duplicate_instance(id: String) -> Result<Instance, String> {
+    tauri::async_runtime::spawn_blocking(move || instance::duplicate(&id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn delete_instance(id: String, delete_files: bool) -> Result<(), String> {
     instance::delete(&id, delete_files).map_err(|e| e.to_string())
@@ -752,6 +764,12 @@ async fn launch_instance(
     let cfg = state.config.lock().unwrap().clone();
     let inst = instance::get(&id).ok_or_else(|| "Instance not found".to_string())?;
 
+    // Starting an instance that is already running is allowed - a second copy
+    // for a second account, an alt on another server. Everything below that
+    // rewrites files is skipped for that copy: the mods folder, the shared
+    // settings and the worlds belong to the game that is already reading them.
+    let already_running = state.running.lock().unwrap().contains_key(&id);
+
     // The newest companion mod, before Java starts - which is the only moment
     // it can be for the same reason the profile below is applied here: Fabric
     // reads the mods folder once, at startup.
@@ -759,7 +777,8 @@ async fn launch_instance(
     // Nothing in here is fatal. Being offline, a rate limit, or a release that
     // does not fit this Minecraft version are all reasons to play with the jar
     // that is already in the folder, not reasons to refuse to start the game.
-    if cfg.auto_update_client_mod
+    if !already_running
+        && cfg.auto_update_client_mod
         && inst.install_client_mod
         && launcher::clientmod::supports_loader(&inst.loader)
     {
@@ -775,12 +794,8 @@ async fn launch_instance(
     // folder once, at startup, and nothing can change the set afterwards.
     // Same reason as apply_server_profile: a second launch of an instance that
     // is already up would rewrite the mods folder under the running one.
-    if state.running.lock().unwrap().contains_key(&id) {
-        return Err("That instance is already running.".into());
-    }
-
     let active = launcher::serverprofiles::load(&id).active;
-    if !active.is_empty() {
+    if !already_running && !active.is_empty() {
         match launcher::serverprofiles::apply(&id, &active) {
             Ok(applied) => {
                 if !applied.failed.is_empty() {
@@ -797,7 +812,7 @@ async fn launch_instance(
 
     // Before the game opens the world, not after: a copy taken while the game
     // holds the files is a copy of a world mid-write.
-    if cfg.backup_on_launch {
+    if !already_running && cfg.backup_on_launch {
         let report = launcher::backup::run_all(&id, cfg.backup_keep.max(1) as usize);
         for skipped in &report.skipped {
             // Not fatal. Losing a backup is bad; refusing to let somebody play
@@ -808,7 +823,7 @@ async fn launch_instance(
 
     // Shared keybinds, server list and Space Client setup, put in place while
     // nothing is reading them
-    {
+    if !already_running {
         let running: Vec<String> = state.running.lock().unwrap().keys().cloned().collect();
         launcher::settings_sync::before_launch(&cfg, &inst, &running);
     }
@@ -819,7 +834,9 @@ async fn launch_instance(
         .map_err(|e| e.to_string())?;
 
     instance::mark_played(&id);
-    state.running.lock().unwrap().insert(id.clone(), child);
+    static NEXT_RUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let run = NEXT_RUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    state.running.lock().unwrap().entry(id.clone()).or_default().push((run, child));
 
     // Poll for the process ending so the console can close itself and the
     // entry does not linger in the registry.
@@ -833,30 +850,33 @@ async fn launch_instance(
             Ok(m) => m,
             Err(_) => return,
         };
-        match map.get_mut(&watch_id) {
-            Some(child) => match child.try_wait() {
-                Ok(Some(status)) => {
-                    map.remove(&watch_id);
-                    drop(map);
-                    // What the source instance changed this session becomes
-                    // the shared setup now, not at the next launch
-                    launcher::settings_sync::after_exit(&sync_cfg, &watch_id);
-                    let _ = app_clone.emit(
-                        "game://exit",
-                        GameExit {
-                            instance_id: watch_id.clone(),
-                            code: status.code().unwrap_or(-1),
-                        },
-                    );
-                    return;
-                }
-                Ok(None) => {}
-                Err(_) => {
-                    map.remove(&watch_id);
-                    return;
-                }
-            },
-            None => return,
+        let Some(runs) = map.get_mut(&watch_id) else { return };
+        let Some(at) = runs.iter().position(|(n, _)| *n == run) else { return };
+        let finished = match runs[at].1.try_wait() {
+            Ok(Some(status)) => Some(status.code().unwrap_or(-1)),
+            Ok(None) => None,
+            Err(_) => Some(-1),
+        };
+        if let Some(code) = finished {
+            runs.remove(at);
+            let last = runs.is_empty();
+            if last {
+                map.remove(&watch_id);
+            }
+            drop(map);
+            // What the source instance changed becomes the shared setup when
+            // its last copy closes, not at the next launch
+            if last {
+                launcher::settings_sync::after_exit(&sync_cfg, &watch_id);
+            }
+            let _ = app_clone.emit(
+                "game://exit",
+                GameExit {
+                    instance_id: watch_id.clone(),
+                    code,
+                },
+            );
+            return;
         }
     });
 
@@ -963,13 +983,35 @@ fn remove_bedrock_pack() -> Result<launcher::bedrock::BedrockInfo, String> {
 async fn kill_instance(id: String, state: State<'_, AppState>) -> Result<(), String> {
     let mut map = state.running.lock().unwrap();
     match map.get_mut(&id) {
-        Some(child) => {
-            child.kill().map_err(|e| format!("Could not stop the game: {}", e))?;
+        Some(runs) => {
+            // Every copy of this instance; the console that asks shows them all
+            for (_, child) in runs.iter_mut() {
+                child.kill().map_err(|e| format!("Could not stop the game: {}", e))?;
+            }
             map.remove(&id);
             Ok(())
         }
         None => Err("This instance is not running.".to_string()),
     }
+}
+
+/// The Minecraft versions and loaders the newest Space Client mod has builds
+/// for, as [mc, loader] pairs.
+#[tauri::command]
+async fn mod_builds() -> Result<Vec<(String, String)>, String> {
+    launcher::clientmod::supported_builds().await.map_err(|e| e.to_string())
+}
+
+/// How many copies of each instance are running, in one call.
+#[tauri::command]
+fn running_counts(state: State<'_, AppState>) -> HashMap<String, usize> {
+    state
+        .running
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(id, runs)| (id.clone(), runs.len()))
+        .collect()
 }
 
 #[tauri::command]
@@ -1448,6 +1490,7 @@ fn main() {
             update_instance,
             import_modpack,
             export_list,
+            duplicate_instance,
             export_instance,
             delete_instance,
             open_instance_folder,
@@ -1467,6 +1510,8 @@ fn main() {
             remove_bedrock_pack,
             kill_instance,
             is_running,
+            running_counts,
+            mod_builds,
             analyse_crash,
             search_mods,
             list_project_versions,

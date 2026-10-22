@@ -19,9 +19,20 @@ fn http() -> anyhow::Result<reqwest::Client> {
         .build()?)
 }
 
-/// The mod is a Fabric mod; Quilt loads it too. Forge and NeoForge cannot.
+/// Every loader the mod is built for. Quilt loads the Fabric build.
 pub fn supports_loader(loader: &str) -> bool {
-    matches!(loader, "fabric" | "quilt")
+    flavour(loader).is_some()
+}
+
+/// Which build of the mod an instance's loader takes: "fabric" for Fabric and
+/// Quilt, "neoforge", "forge", or None for vanilla.
+pub fn flavour(loader: &str) -> Option<&'static str> {
+    match loader {
+        "fabric" | "quilt" => Some("fabric"),
+        "neoforge" => Some("neoforge"),
+        "forge" => Some("forge"),
+        _ => None,
+    }
 }
 
 /// Installs (or refreshes) the companion mod in this instance.
@@ -73,9 +84,15 @@ pub async fn install_client_mod(app: &AppHandle, instance: &Instance) -> anyhow:
     let mut skipped: Option<String> = None;
 
     for release in &releases {
-        let Some(asset) = mod_asset(release, &instance.mc_version) else { continue };
+        let wanted = flavour(&instance.loader).unwrap_or("fabric");
+        let Some(asset) = mod_asset(release, &instance.mc_version, wanted) else { continue };
         let version = release_version(release);
 
+        if asset.flavour != wanted {
+            // The release has no build for this loader at all; an older one may
+            skipped.get_or_insert(format!("no {} build of the Space Client mod yet", instance.loader));
+            continue;
+        }
         match asset.mc_version.as_deref() {
             Some(mc) if !same_series(mc, &instance.mc_version) => {
                 // Labelled for another version: no download needed to know
@@ -154,6 +171,35 @@ pub async fn install_client_mod(app: &AppHandle, instance: &Instance) -> anyhow:
     Ok(None)
 }
 
+/// Which Minecraft versions and loaders the newest mod release has a build
+/// for, read from its jar names: [("26.3", "fabric"), ("26.3", "neoforge"), ...].
+///
+/// Asked of the release rather than written into the launcher, so a mod
+/// release that adds a Minecraft version is supported by every launcher
+/// already installed - no launcher update in between.
+pub async fn supported_builds() -> anyhow::Result<Vec<(String, String)>> {
+    let client = http()?;
+    let releases = list_releases(&client).await?;
+    let Some(newest) = releases.first() else { return Ok(Vec::new()) };
+    let mut out: Vec<(String, String)> = newest
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .map(|assets| {
+            assets
+                .iter()
+                .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
+                .filter_map(|name| {
+                    let (mc, flavour) = parse_name(name);
+                    mc.map(|mc| (mc, flavour.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
 /// Published releases, newest first, drafts and pre-releases left out.
 /// Up to three pages: far more history than any instance will reach back for.
 async fn list_releases(client: &reqwest::Client) -> anyhow::Result<Vec<serde_json::Value>> {
@@ -185,6 +231,9 @@ struct ModAsset {
     url: String,
     /// From a name like spaceclient-1.47.0-mc26.3.jar; None on older releases
     mc_version: Option<String>,
+    /// "fabric", "neoforge" or "forge", from the name's suffix; unlabelled and
+    /// unsuffixed jars are Fabric builds, which is all there used to be.
+    flavour: &'static str,
 }
 
 /// The jar of one release that suits `instance_mc`.
@@ -193,7 +242,7 @@ struct ModAsset {
 /// is not the right one: the one labelled for the instance's series is. Failing
 /// that, an unlabelled jar (older releases), whose fabric.mod.json then decides.
 /// Failing that, any labelled jar, only so the caller can say what it skipped.
-fn mod_asset(release: &serde_json::Value, instance_mc: &str) -> Option<ModAsset> {
+fn mod_asset(release: &serde_json::Value, instance_mc: &str, wanted: &str) -> Option<ModAsset> {
     let assets = release.get("assets")?.as_array()?;
     let jars: Vec<ModAsset> = assets
         .iter()
@@ -207,31 +256,48 @@ fn mod_asset(release: &serde_json::Value, instance_mc: &str) -> Option<ModAsset>
             {
                 return None;
             }
+            let (mc_version, flavour) = parse_name(name);
             Some(ModAsset {
                 url: a.get("browser_download_url")?.as_str()?.to_string(),
-                mc_version: mc_from_name(name),
+                mc_version,
+                flavour,
             })
         })
         .collect();
 
     let pick = jars
         .iter()
-        .position(|j| j.mc_version.as_deref().is_some_and(|mc| same_series(mc, instance_mc)))
-        .or_else(|| jars.iter().position(|j| j.mc_version.is_none()))
+        .position(|j| {
+            j.flavour == wanted
+                && j.mc_version.as_deref().is_some_and(|mc| same_series(mc, instance_mc))
+        })
+        .or_else(|| jars.iter().position(|j| j.flavour == wanted && j.mc_version.is_none()))
+        .or_else(|| jars.iter().position(|j| j.flavour == wanted))
         .or(if jars.is_empty() { None } else { Some(0) })?;
     jars.into_iter().nth(pick)
 }
 
 /// "spaceclient-1.47.0-mc26.3.jar" -> "26.3".
 fn mc_from_name(name: &str) -> Option<String> {
-    let stem = name.strip_suffix(".jar")?;
-    let at = stem.rfind("-mc")?;
-    let mc = &stem[at + 3..];
-    if !mc.is_empty() && mc.chars().all(|c| c.is_ascii_digit() || c == '.') {
-        Some(mc.to_string())
+    parse_name(name).0
+}
+
+/// The Minecraft version and loader a jar's name says it is for:
+/// "spaceclient-1.57.0-mc26.3.jar" -> (26.3, fabric),
+/// "spaceclient-1.57.0-mc26.3-neoforge.jar" -> (26.3, neoforge).
+fn parse_name(name: &str) -> (Option<String>, &'static str) {
+    let Some(stem) = name.strip_suffix(".jar") else { return (None, "fabric") };
+    let (stem, flavour) = if let Some(rest) = stem.strip_suffix("-neoforge") {
+        (rest, "neoforge")
+    } else if let Some(rest) = stem.strip_suffix("-forge") {
+        (rest, "forge")
     } else {
-        None
-    }
+        (stem, "fabric")
+    };
+    let mc = stem.rfind("-mc").map(|at| &stem[at + 3..]).filter(|mc| {
+        !mc.is_empty() && mc.chars().all(|c| c.is_ascii_digit() || c == '.')
+    });
+    (mc.map(String::from), flavour)
 }
 
 /// The version the release's jar carries, from its tag: "v.1.47.0" -> "1.47.0".
@@ -260,16 +326,114 @@ enum Fit {
 /// moment somebody replaces the file by hand, and then the launcher insists
 /// everything is current while the folder says otherwise.
 fn installed_version(path: &std::path::Path) -> Option<String> {
-    let file = std::fs::File::open(path).ok()?;
-    let mut archive = zip::ZipArchive::new(file).ok()?;
-    let mut entry = archive.by_name("fabric.mod.json").ok()?;
+    let bytes = std::fs::read(path).ok()?;
+    read_metadata(&bytes).ok()?.version
+}
 
-    let mut text = String::new();
+/// What a jar says about itself, whichever loader it was built for.
+#[derive(Debug, Default)]
+struct JarMeta {
+    flavour: &'static str,
+    version: Option<String>,
+    /// The Minecraft requirement as written: a Fabric range for Fabric,
+    /// a Maven range ("[26.3,26.4)") for NeoForge and Forge.
+    minecraft: Option<String>,
+}
+
+fn read_metadata(bytes: &[u8]) -> Result<JarMeta, String> {
     use std::io::Read;
-    entry.read_to_string(&mut text).ok()?;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|_| "the download is not a readable jar".to_string())?;
 
-    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
-    json.get("version")?.as_str().map(String::from)
+    let mut read = |name: &str| -> Option<String> {
+        let mut entry = archive.by_name(name).ok()?;
+        let mut text = String::new();
+        entry.read_to_string(&mut text).ok()?;
+        Some(text)
+    };
+
+    if let Some(text) = read("fabric.mod.json") {
+        let json: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|_| "the jar's fabric.mod.json is malformed".to_string())?;
+        return Ok(JarMeta {
+            flavour: "fabric",
+            version: json.get("version").and_then(|v| v.as_str()).map(String::from),
+            minecraft: json
+                .pointer("/depends/minecraft")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+        });
+    }
+    for (file, flavour) in [("META-INF/neoforge.mods.toml", "neoforge"), ("META-INF/mods.toml", "forge")] {
+        if let Some(text) = read(file) {
+            return Ok(JarMeta {
+                flavour,
+                version: toml_mod_version(&text),
+                minecraft: toml_dependency_range(&text, "minecraft"),
+            });
+        }
+    }
+    Err("the jar carries no mod metadata".to_string())
+}
+
+/// The version="..." of the first [[mods]] entry. A full TOML parser for two
+/// keys would be more code than the file it reads.
+fn toml_mod_version(text: &str) -> Option<String> {
+    let mods = text.find("[[mods]]")?;
+    toml_string(&text[mods..], "version")
+}
+
+/// The versionRange of the [[dependencies.*]] block whose modId is `id`.
+fn toml_dependency_range(text: &str, id: &str) -> Option<String> {
+    text.split("[[dependencies.")
+        .skip(1)
+        .find(|block| toml_string(block, "modId").as_deref() == Some(id))
+        .and_then(|block| toml_string(block, "versionRange"))
+}
+
+fn toml_string(block: &str, key: &str) -> Option<String> {
+    for line in block.lines() {
+        let line = line.trim();
+        if line.starts_with("[[") && !line.starts_with("[[mods]]") && !line.starts_with("[[dependencies") {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix(key) else { continue };
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix('=') else { continue };
+        let rest = rest.trim();
+        let value = rest.trim_matches('"');
+        if rest.starts_with('"') {
+            return Some(value.split('"').next().unwrap_or("").to_string());
+        }
+    }
+    None
+}
+
+/// A Maven version range as NeoForge and Forge write it: "[26.3,26.4)",
+/// "[61,)", "26.3". Unreadable ranges count as a match, as with Fabric's.
+pub(crate) fn maven_range_matches(range: &str, version: &str) -> bool {
+    let range = range.trim();
+    if range.is_empty() || range == "*" {
+        return true;
+    }
+    let (Some(open), Some(close)) = (range.chars().next(), range.chars().last()) else { return true };
+    if !matches!(open, '[' | '(') || !matches!(close, ']' | ')') {
+        return compare(version, range) == 0;
+    }
+    let inner = &range[1..range.len() - 1];
+    let Some((low, high)) = inner.split_once(',') else {
+        return compare(version, inner) == 0;
+    };
+    let (low, high) = (low.trim(), high.trim());
+    let low_ok = low.is_empty() || {
+        let c = compare(version, low);
+        if open == '[' { c >= 0 } else { c > 0 }
+    };
+    let high_ok = high.is_empty() || {
+        let c = compare(version, high);
+        if close == ']' { c <= 0 } else { c < 0 }
+    };
+    low_ok && high_ok
 }
 
 /// Whether the jar's own declared dependencies match this instance.
@@ -279,44 +443,26 @@ fn installed_version(path: &std::path::Path) -> Option<String> {
 /// different Minecraft version does not fail politely - it crashes on a missing
 /// class halfway through loading a world, which is a far worse way to find out.
 fn jar_fits(bytes: &[u8], instance: &Instance) -> Fit {
-    let reader = std::io::Cursor::new(bytes);
-
-    let mut archive = match zip::ZipArchive::new(reader) {
-        Ok(a) => a,
-        Err(_) => return Fit::No("the download is not a readable jar".into()),
+    let meta = match read_metadata(bytes) {
+        Ok(m) => m,
+        Err(reason) => return Fit::No(reason),
     };
 
-    let mut text = String::new();
-    {
-        let mut entry = match archive.by_name("fabric.mod.json") {
-            Ok(e) => e,
-            Err(_) => return Fit::No("the jar carries no fabric.mod.json".into()),
-        };
-        use std::io::Read;
-        if entry.read_to_string(&mut text).is_err() {
-            return Fit::No("the jar's fabric.mod.json could not be read".into());
-        }
-    }
-
-    let json: serde_json::Value = match serde_json::from_str(&text) {
-        Ok(v) => v,
-        Err(_) => return Fit::No("the jar's fabric.mod.json is malformed".into()),
+    // Loader first: a jar for another loader would not even be read
+    let Some(wanted) = flavour(&instance.loader) else {
+        return Fit::No(format!("{} cannot load mods", instance.loader));
     };
-
-    // Loader first: a Forge instance has no business with this file at all,
-    // and the caller has already checked, so this is the belt to that braces.
-    if !supports_loader(&instance.loader) {
-        return Fit::No(format!("{} cannot load a Fabric mod", instance.loader));
+    if meta.flavour != wanted {
+        return Fit::No(format!("a {} build, this instance runs {}", meta.flavour, instance.loader));
     }
 
-    let depends = json.get("depends");
-
-    let wanted_mc = depends
-        .and_then(|d| d.get("minecraft"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("*");
-
-    if !version_matches(wanted_mc, &instance.mc_version) {
+    let wanted_mc = meta.minecraft.unwrap_or_else(|| "*".into());
+    let fits = if meta.flavour == "fabric" {
+        version_matches(&wanted_mc, &instance.mc_version)
+    } else {
+        maven_range_matches(&wanted_mc, &instance.mc_version)
+    };
+    if !fits {
         return Fit::No(format!(
             "built for Minecraft {}, this instance is {}",
             wanted_mc, instance.mc_version
@@ -449,7 +595,7 @@ pub async fn install_extras(
             }
         } else {
             report.notes.push(format!(
-                "The Space Client mod needs Fabric or Quilt, so it was skipped on this {} instance.",
+                "The Space Client mod needs a mod loader, so it was skipped on this {} instance.",
                 instance.loader
             ));
         }
@@ -548,7 +694,7 @@ mod tests {
                 { "name": "spaceclient-1.47.0-mc26.3.jar", "browser_download_url": "https://x/mod" }
             ]
         });
-        let asset = mod_asset(&release, "26.3").unwrap();
+        let asset = mod_asset(&release, "26.3", "fabric").unwrap();
         assert_eq!(asset.url, "https://x/mod");
         assert_eq!(asset.mc_version.as_deref(), Some("26.3"));
     }
@@ -564,7 +710,7 @@ mod tests {
                 { "name": "spaceclient-1.55.0-mc26.3.jar", "browser_download_url": "https://x/26.3" }
             ]
         });
-        let url = |mc: &str| mod_asset(&release, mc).unwrap().url;
+        let url = |mc: &str| mod_asset(&release, mc, "fabric").unwrap().url;
         assert_eq!(url("1.21.11"), "https://x/1.21.11");
         assert_eq!(url("26.1"), "https://x/26.1");
         assert_eq!(url("26.1.2"), "https://x/26.1");
@@ -572,7 +718,7 @@ mod tests {
         assert_eq!(url("26.3"), "https://x/26.3");
         // Nothing for this version: a labelled jar comes back, and the caller
         // skips it by its label without downloading
-        let other = mod_asset(&release, "1.21.10").unwrap();
+        let other = mod_asset(&release, "1.21.10", "fabric").unwrap();
         assert!(!same_series(other.mc_version.as_deref().unwrap(), "1.21.10"));
     }
 
@@ -582,5 +728,101 @@ mod tests {
         assert!(version_matches(">=26.1 <26.2", "26.1.2"));
         assert!(!version_matches(">=26.1 <26.2", "26.2"));
         assert!(version_matches("~1.21.11", "1.21.11"));
+    }
+
+    #[test]
+    fn the_name_says_minecraft_version_and_loader() {
+        assert_eq!(parse_name("spaceclient-1.57.0-mc26.3.jar"), (Some("26.3".into()), "fabric"));
+        assert_eq!(parse_name("spaceclient-1.57.0-mc26.3-neoforge.jar"), (Some("26.3".into()), "neoforge"));
+        assert_eq!(parse_name("spaceclient-1.57.0-mc1.21.11-forge.jar"), (Some("1.21.11".into()), "forge"));
+        assert_eq!(parse_name("spaceclient-1.46.0.jar"), (None, "fabric"));
+    }
+
+    #[test]
+    fn each_loader_gets_its_own_build() {
+        let release = serde_json::json!({
+            "tag_name": "v.1.57.0",
+            "assets": [
+                { "name": "spaceclient-1.57.0-mc26.3.jar", "browser_download_url": "https://x/fabric" },
+                { "name": "spaceclient-1.57.0-mc26.3-forge.jar", "browser_download_url": "https://x/forge" },
+                { "name": "spaceclient-1.57.0-mc26.3-neoforge.jar", "browser_download_url": "https://x/neoforge" },
+                { "name": "spaceclient-1.57.0-mc26.2-neoforge.jar", "browser_download_url": "https://x/neoforge262" }
+            ]
+        });
+        assert_eq!(mod_asset(&release, "26.3", "fabric").unwrap().url, "https://x/fabric");
+        assert_eq!(mod_asset(&release, "26.3", "neoforge").unwrap().url, "https://x/neoforge");
+        assert_eq!(mod_asset(&release, "26.3", "forge").unwrap().url, "https://x/forge");
+        assert_eq!(mod_asset(&release, "26.2", "neoforge").unwrap().url, "https://x/neoforge262");
+        assert_eq!(flavour("quilt"), Some("fabric"));
+        assert_eq!(flavour("vanilla"), None);
+    }
+
+    #[test]
+    fn an_old_release_has_nothing_for_neoforge() {
+        let release = serde_json::json!({
+            "tag_name": "v.1.56.3",
+            "assets": [{ "name": "spaceclient-1.56.3-mc26.3.jar", "browser_download_url": "https://x/fabric" }]
+        });
+        // Something comes back, but labelled as the Fabric build it is, so the
+        // install loop skips it rather than putting it into a NeoForge folder
+        assert_eq!(mod_asset(&release, "26.3", "neoforge").unwrap().flavour, "fabric");
+    }
+
+    #[test]
+    fn maven_ranges_read_like_neoforge() {
+        assert!(maven_range_matches("[26.3,26.4)", "26.3"));
+        assert!(maven_range_matches("[26.3,26.4)", "26.3.1"));
+        assert!(!maven_range_matches("[26.3,26.4)", "26.4"));
+        assert!(maven_range_matches("[26.1,26.2)", "26.1.2"));
+        assert!(!maven_range_matches("[26.1,26.2)", "26.2"));
+        assert!(maven_range_matches("[1.21.11,1.21.12)", "1.21.11"));
+        assert!(maven_range_matches("[61,)", "66.0.10"));
+        assert!(!maven_range_matches("(26.3,26.4]", "26.3"));
+    }
+
+    #[test]
+    fn toml_metadata_is_read() {
+        let toml = r#"modLoader="javafml"
+loaderVersion="[1,)"
+[[mods]]
+modId="spaceclient"
+version="1.57.0"
+[[dependencies.spaceclient]]
+modId="neoforge"
+versionRange="[26.3,26.4)"
+[[dependencies.spaceclient]]
+modId="minecraft"
+type="required"
+versionRange="[26.3,26.4)"
+"#;
+        assert_eq!(toml_mod_version(toml).as_deref(), Some("1.57.0"));
+        assert_eq!(toml_dependency_range(toml, "minecraft").as_deref(), Some("[26.3,26.4)"));
+    }
+
+    /// The jars a mod build actually produced, read the way an install reads
+    /// them. Needs them in a folder: SPACE_MOD_JARS=<dir> cargo test -- --ignored
+    #[test]
+    #[ignore]
+    fn built_jars_are_read_right() {
+        let dir = std::env::var("SPACE_MOD_JARS").expect("SPACE_MOD_JARS");
+        let mut seen = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().to_string();
+            let (mc, flavour) = parse_name(&name);
+            let mc = mc.expect("the name carries the Minecraft version");
+            let meta = read_metadata(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(meta.flavour, flavour, "{name}");
+            assert!(meta.version.is_some(), "{name}");
+            let range = meta.minecraft.clone().expect("a Minecraft requirement");
+            let fits = |v: &str| {
+                if flavour == "fabric" { version_matches(&range, v) } else { maven_range_matches(&range, v) }
+            };
+            assert!(fits(&mc), "{name}: {range} should take {mc}");
+            assert!(fits(&format!("{mc}.1")) || mc.starts_with("1."), "{name}: {range} should take {mc}.1");
+            assert!(!fits("1.20.1"), "{name}: {range} should not take 1.20.1");
+            seen += 1;
+        }
+        assert!(seen > 0);
     }
 }

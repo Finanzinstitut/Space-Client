@@ -455,7 +455,14 @@ function renderInstances() {
     exportBtn.title = t("btn_export");
     exportBtn.onclick = () => openExportModal(inst);
 
+    const dupBtn = document.createElement("button");
+    dupBtn.className = "btn icon-btn small";
+    dupBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/></svg>';
+    dupBtn.title = t("btn_duplicate");
+    dupBtn.onclick = () => duplicateInstance(inst, dupBtn);
+
     actions.appendChild(exportBtn);
+    actions.appendChild(dupBtn);
     actions.appendChild(editBtn);
     actions.appendChild(delBtn);
 
@@ -471,6 +478,23 @@ function renderInstances() {
   });
 
   stagger(list.querySelectorAll(".instance-card"));
+}
+
+/// A copy of the instance beside it, worlds and all. The button waits while the
+/// copy runs, because a big world takes a moment and a second click would make
+/// a second copy.
+async function duplicateInstance(inst, button) {
+  button.disabled = true;
+  setStatus("global-status", t("duplicating", { name: inst.name }));
+  try {
+    const copy = await invoke("duplicate_instance", { id: inst.id });
+    await refreshInstances();
+    setStatus("global-status", t("duplicated", { name: copy.name }), "success");
+  } catch (e) {
+    setStatus("global-status", String(e), "error");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function refreshInstances() {
@@ -970,16 +994,17 @@ let runningIds = new Set();
  * is_running, and a poll every couple of seconds is cheaper to get right than
  * a new event channel for something that changes a handful of times a session.
  */
+/** How many copies of each running instance are up, by id. */
+let runningCounts = {};
+
 async function refreshRunning() {
-  const found = new Set();
-  for (const inst of instances) {
-    try {
-      if (await invoke("is_running", { id: inst.id })) found.add(inst.id);
-    } catch {
-      // An instance that cannot be asked is treated as stopped
-    }
+  try {
+    runningCounts = await invoke("running_counts");
+  } catch {
+    // Nothing that cannot be asked about counts as running
+    runningCounts = {};
   }
-  runningIds = found;
+  runningIds = new Set(Object.keys(runningCounts));
   renderRunning();
 
   // Everything decorative stops while a game is up. The launcher stays open
@@ -1019,7 +1044,8 @@ function renderRunning() {
 
   button.classList.toggle("hidden", active.length === 0);
   if (label) {
-    label.textContent = t("running_button") + " (" + active.length + ")";
+    const total = active.reduce((n, i) => n + (runningCounts[i.id] || 1), 0);
+    label.textContent = t("running_button") + " (" + total + ")";
   }
 
   if (active.length === 0) {
@@ -1037,7 +1063,9 @@ function renderRunning() {
       '<span class="running-name"></span>' +
       '<span class="running-version"></span>' +
       '<span class="running-open" data-i18n="running_open"></span>';
-    row.querySelector(".running-name").textContent = inst.name;
+    const copies = runningCounts[inst.id] || 1;
+    row.querySelector(".running-name").textContent =
+      copies > 1 ? `${inst.name} ×${copies}` : inst.name;
     row.querySelector(".running-version").textContent =
       inst.mc_version + " " + inst.loader;
     row.querySelector(".running-open").textContent = t("running_open");
@@ -1237,7 +1265,10 @@ listen("game://exit", (event) => {
   const p = event.payload;
   if (!consoleInstanceId || p.instance_id !== consoleInstanceId) return;
   appendConsoleLine(t("console_exited", { code: p.code }), "info");
-  $("btn-console-kill").disabled = true;
+  // Another copy of the same instance may still be running
+  invoke("is_running", { id: p.instance_id })
+    .then((running) => { $("btn-console-kill").disabled = !running; })
+    .catch(() => { $("btn-console-kill").disabled = true; });
 });
 
 $("btn-console-close").addEventListener("click", closeConsole);
@@ -1799,11 +1830,27 @@ $("new-snapshots").addEventListener("change", () => {
 });
 
 
-/// The HUD mod is a Fabric mod with builds for these release series. The
-/// launcher picks the build that matches the instance; any other version
-/// silently gets an instance without it, so say so up front.
-const HUD_MC_SERIES = ["1.21.11", "26.1", "26.2", "26.3"];
-const HUD_LOADERS = ["fabric", "quilt"];
+/// The release series and loaders the mod has builds for. Known ones first,
+/// then replaced by what the newest mod release actually carries - so a new
+/// Minecraft version is supported here the day the mod has a build for it,
+/// without a launcher update. Quilt takes the Fabric build.
+let HUD_BUILDS = ["1.21.11", "26.1", "26.2", "26.3"]
+  .flatMap((mc) => ["fabric", "neoforge", "forge"].map((loader) => [mc, loader]));
+
+async function refreshModBuilds() {
+  try {
+    const builds = await invoke("mod_builds");
+    if (Array.isArray(builds) && builds.length) HUD_BUILDS = builds;
+  } catch {
+    // Offline: the list above stands
+  }
+  updateHudCompatNote();
+}
+
+function modSupports(version, loader) {
+  const flavour = loader === "quilt" ? "fabric" : loader;
+  return HUD_BUILDS.some(([mc, l]) => l === flavour && (version === mc || version.startsWith(mc + ".")));
+}
 
 function updateHudCompatNote() {
   const note = $("hud-compat-note");
@@ -1814,9 +1861,15 @@ function updateHudCompatNote() {
     return;
   }
 
-  const inSeries = HUD_MC_SERIES.some((s) => version === s || version.startsWith(s + "."));
-  const supported = inSeries && HUD_LOADERS.includes(loader);
-  note.textContent = supported ? t("hud_supported") : t("hud_unsupported");
+  const supported = modSupports(version, loader);
+  const flavour = loader === "quilt" ? "fabric" : loader;
+  const versions = HUD_BUILDS.filter(([, l]) => l === flavour).map(([mc]) => mc);
+  note.textContent = supported
+    ? t("hud_supported")
+    : t("hud_unsupported", {
+        loader: $("new-loader").selectedOptions[0]?.textContent || loader,
+        versions: versions.length ? versions.join(", ") : "—",
+      });
   note.className = "compat-note " + (supported ? "ok" : "warn");
 }
 
@@ -1831,6 +1884,7 @@ $("new-loader").addEventListener("change", refreshNewLoaderVersions);
 $("new-version").addEventListener("change", refreshNewLoaderVersions);
 
 $("btn-new-instance").addEventListener("click", () => {
+  refreshModBuilds();
   $("new-name").value = "";
   $("new-path").value = "";
   $("new-ram").value = config?.max_ram_mb ?? 4096;
