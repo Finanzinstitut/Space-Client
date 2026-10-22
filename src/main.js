@@ -1265,7 +1265,10 @@ listen("game://exit", (event) => {
   const p = event.payload;
   if (!consoleInstanceId || p.instance_id !== consoleInstanceId) return;
   appendConsoleLine(t("console_exited", { code: p.code }), "info");
-  $("btn-console-kill").disabled = true;
+  // Another copy of the same instance may still be running
+  invoke("is_running", { id: p.instance_id })
+    .then((running) => { $("btn-console-kill").disabled = !running; })
+    .catch(() => { $("btn-console-kill").disabled = true; });
 });
 
 $("btn-console-close").addEventListener("click", closeConsole);
