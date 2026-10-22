@@ -172,6 +172,88 @@ fn slugify(name: &str) -> String {
     }
 }
 
+/// Folders that are not copied with an instance: what the game writes about a
+/// session, and the world backups, which can be larger than everything else
+/// together and are copies already.
+const NOT_DUPLICATED: &[&str] = &["backups", ".minecraft/logs", ".minecraft/crash-reports"];
+
+fn copy_tree(from: &std::path::Path, to: &std::path::Path, root: &std::path::Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let path = entry.path();
+        let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().replace('\\', "/");
+        if NOT_DUPLICATED.contains(&rel.as_str()) {
+            continue;
+        }
+        // A lock held by a running game is not worth failing the copy over
+        if entry.file_name() == "session.lock" {
+            continue;
+        }
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_tree(&path, &target, root)?;
+        } else {
+            fs::copy(&path, &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// Copies an instance: its folder beside the original, everything in it -
+/// worlds, mods, settings - under a new id and the name "<name> (2)".
+pub fn duplicate(id: &str) -> anyhow::Result<Instance> {
+    let original = get(id).ok_or_else(|| anyhow::anyhow!("Instance not found"))?;
+    let source = original.dir();
+    let parent = source
+        .parent()
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| anyhow::anyhow!("The instance folder has no parent folder"))?;
+
+    let all = load_all();
+    let mut n = 2;
+    let name = loop {
+        let candidate = format!("{} ({})", original.name, n);
+        if !all.iter().any(|i| i.name == candidate) {
+            break candidate;
+        }
+        n += 1;
+    };
+
+    let slug = slugify(&name);
+    let mut dir = parent.join(&slug);
+    let mut counter = 2;
+    while dir.exists() {
+        dir = parent.join(format!("{}-{}", slug, counter));
+        counter += 1;
+    }
+
+    // Into a part folder first, so a copy that fails half way is not left
+    // looking like an instance
+    let part = parent.join(format!(".{}.part", dir.file_name().unwrap().to_string_lossy()));
+    if part.exists() {
+        fs::remove_dir_all(&part)?;
+    }
+    if let Err(e) = copy_tree(&source, &part, &source) {
+        fs::remove_dir_all(&part).ok();
+        return Err(e.into());
+    }
+    fs::rename(&part, &dir)?;
+
+    let copy = Instance {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        path: dir.to_string_lossy().to_string(),
+        created: format!("{}", chrono_now()),
+        last_played: 0,
+        play_count: 0,
+        ..original
+    };
+    fs::write(dir.join("instance.json"), serde_json::to_string_pretty(&copy)?)?;
+    upsert(copy.clone())?;
+    Ok(copy)
+}
+
 /// Creates a new instance. `parent_path` is where the instance folder is
 /// created - empty means "use the default instances folder".
 ///
@@ -283,5 +365,31 @@ pub fn mark_played(id: &str) {
     }
     if touched {
         let _ = save_all(&all);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_copy_leaves_logs_and_backups_behind() {
+        let root = std::env::temp_dir().join(format!("sc-dup-{}", uuid::Uuid::new_v4()));
+        let src = root.join("a");
+        for p in ["backups/w.zip", ".minecraft/logs/latest.log", ".minecraft/saves/W/level.dat",
+                  ".minecraft/mods/x.jar", ".minecraft/options.txt", ".minecraft/saves/W/session.lock"] {
+            let f = src.join(p);
+            fs::create_dir_all(f.parent().unwrap()).unwrap();
+            fs::write(f, "x").unwrap();
+        }
+        let dst = root.join("b");
+        copy_tree(&src, &dst, &src).unwrap();
+        assert!(dst.join(".minecraft/saves/W/level.dat").exists());
+        assert!(dst.join(".minecraft/mods/x.jar").exists());
+        assert!(dst.join(".minecraft/options.txt").exists());
+        assert!(!dst.join("backups").exists());
+        assert!(!dst.join(".minecraft/logs").exists());
+        assert!(!dst.join(".minecraft/saves/W/session.lock").exists());
+        fs::remove_dir_all(root).ok();
     }
 }
