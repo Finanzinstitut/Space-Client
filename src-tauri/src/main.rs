@@ -995,6 +995,13 @@ async fn kill_instance(id: String, state: State<'_, AppState>) -> Result<(), Str
     }
 }
 
+/// The Minecraft versions and loaders the newest Space Client mod has builds
+/// for, as [mc, loader] pairs.
+#[tauri::command]
+async fn mod_builds() -> Result<Vec<(String, String)>, String> {
+    launcher::clientmod::supported_builds().await.map_err(|e| e.to_string())
+}
+
 /// How many copies of each instance are running, in one call.
 #[tauri::command]
 fn running_counts(state: State<'_, AppState>) -> HashMap<String, usize> {
@@ -1504,6 +1511,7 @@ fn main() {
             kill_instance,
             is_running,
             running_counts,
+            mod_builds,
             analyse_crash,
             search_mods,
             list_project_versions,

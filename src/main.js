@@ -1827,11 +1827,28 @@ $("new-snapshots").addEventListener("change", () => {
 });
 
 
-/// The HUD mod is a Fabric mod with builds for these release series. The
-/// launcher picks the build that matches the instance; any other version
-/// silently gets an instance without it, so say so up front.
-const HUD_MC_SERIES = ["1.21.11", "26.1", "26.2", "26.3"];
-const HUD_LOADERS = ["fabric", "quilt", "neoforge", "forge"];
+/// The release series and loaders the mod has builds for. Known ones first,
+/// then replaced by what the newest mod release actually carries - so a new
+/// Minecraft version is supported here the day the mod has a build for it,
+/// without a launcher update. Quilt takes the Fabric build.
+let HUD_BUILDS = [
+  ["1.21.11", "fabric"], ["26.1", "fabric"], ["26.2", "fabric"], ["26.3", "fabric"],
+];
+
+async function refreshModBuilds() {
+  try {
+    const builds = await invoke("mod_builds");
+    if (Array.isArray(builds) && builds.length) HUD_BUILDS = builds;
+  } catch {
+    // Offline: the list above stands
+  }
+  updateHudCompatNote();
+}
+
+function modSupports(version, loader) {
+  const flavour = loader === "quilt" ? "fabric" : loader;
+  return HUD_BUILDS.some(([mc, l]) => l === flavour && (version === mc || version.startsWith(mc + ".")));
+}
 
 function updateHudCompatNote() {
   const note = $("hud-compat-note");
@@ -1842,8 +1859,7 @@ function updateHudCompatNote() {
     return;
   }
 
-  const inSeries = HUD_MC_SERIES.some((s) => version === s || version.startsWith(s + "."));
-  const supported = inSeries && HUD_LOADERS.includes(loader);
+  const supported = modSupports(version, loader);
   note.textContent = supported ? t("hud_supported") : t("hud_unsupported");
   note.className = "compat-note " + (supported ? "ok" : "warn");
 }
@@ -1859,6 +1875,7 @@ $("new-loader").addEventListener("change", refreshNewLoaderVersions);
 $("new-version").addEventListener("change", refreshNewLoaderVersions);
 
 $("btn-new-instance").addEventListener("click", () => {
+  refreshModBuilds();
   $("new-name").value = "";
   $("new-path").value = "";
   $("new-ram").value = config?.max_ram_mb ?? 4096;

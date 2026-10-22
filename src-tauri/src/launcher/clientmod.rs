@@ -171,6 +171,35 @@ pub async fn install_client_mod(app: &AppHandle, instance: &Instance) -> anyhow:
     Ok(None)
 }
 
+/// Which Minecraft versions and loaders the newest mod release has a build
+/// for, read from its jar names: [("26.3", "fabric"), ("26.3", "neoforge"), ...].
+///
+/// Asked of the release rather than written into the launcher, so a mod
+/// release that adds a Minecraft version is supported by every launcher
+/// already installed - no launcher update in between.
+pub async fn supported_builds() -> anyhow::Result<Vec<(String, String)>> {
+    let client = http()?;
+    let releases = list_releases(&client).await?;
+    let Some(newest) = releases.first() else { return Ok(Vec::new()) };
+    let mut out: Vec<(String, String)> = newest
+        .get("assets")
+        .and_then(|a| a.as_array())
+        .map(|assets| {
+            assets
+                .iter()
+                .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
+                .filter_map(|name| {
+                    let (mc, flavour) = parse_name(name);
+                    mc.map(|mc| (mc, flavour.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
 /// Published releases, newest first, drafts and pre-releases left out.
 /// Up to three pages: far more history than any instance will reach back for.
 async fn list_releases(client: &reqwest::Client) -> anyhow::Result<Vec<serde_json::Value>> {
