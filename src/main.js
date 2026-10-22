@@ -1831,9 +1831,8 @@ $("new-snapshots").addEventListener("change", () => {
 /// then replaced by what the newest mod release actually carries - so a new
 /// Minecraft version is supported here the day the mod has a build for it,
 /// without a launcher update. Quilt takes the Fabric build.
-let HUD_BUILDS = [
-  ["1.21.11", "fabric"], ["26.1", "fabric"], ["26.2", "fabric"], ["26.3", "fabric"],
-];
+let HUD_BUILDS = ["1.21.11", "26.1", "26.2", "26.3"]
+  .flatMap((mc) => ["fabric", "neoforge", "forge"].map((loader) => [mc, loader]));
 
 async function refreshModBuilds() {
   try {
@@ -1860,7 +1859,14 @@ function updateHudCompatNote() {
   }
 
   const supported = modSupports(version, loader);
-  note.textContent = supported ? t("hud_supported") : t("hud_unsupported");
+  const flavour = loader === "quilt" ? "fabric" : loader;
+  const versions = HUD_BUILDS.filter(([, l]) => l === flavour).map(([mc]) => mc);
+  note.textContent = supported
+    ? t("hud_supported")
+    : t("hud_unsupported", {
+        loader: $("new-loader").selectedOptions[0]?.textContent || loader,
+        versions: versions.length ? versions.join(", ") : "—",
+      });
   note.className = "compat-note " + (supported ? "ok" : "warn");
 }
 
