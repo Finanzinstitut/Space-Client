@@ -216,6 +216,95 @@ pub async fn store_url(url: &str, name: &str, variant: &str) -> anyhow::Result<S
     store_bytes(bytes, name, variant)
 }
 
+/// Puts another player's current skin into the library, by their name.
+///
+/// Read from Mojang's public profile, the same place the game gets everybody
+/// else's skin from, so the model comes along: a slim skin stays slim.
+pub async fn import_player(player: &str) -> anyhow::Result<SavedSkin> {
+    let player = player.trim();
+    if player.is_empty() || player.len() > 16 || !player.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        anyhow::bail!("That is not a Minecraft name.");
+    }
+    let client = reqwest::Client::builder()
+        .user_agent("SpaceClient/0.1")
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?;
+
+    let lookup = client
+        .get(format!("https://api.mojang.com/users/profiles/minecraft/{}", player))
+        .send()
+        .await?;
+    if lookup.status() == reqwest::StatusCode::NOT_FOUND || lookup.status() == reqwest::StatusCode::NO_CONTENT {
+        anyhow::bail!("There is no player called {}.", player);
+    }
+    let lookup: serde_json::Value = lookup.error_for_status()?.json().await?;
+    let uuid = lookup["id"].as_str().unwrap_or_default().to_string();
+    let exact = lookup["name"].as_str().unwrap_or(player).to_string();
+
+    let profile: serde_json::Value = client
+        .get(format!("https://sessionserver.mojang.com/session/minecraft/profile/{}", uuid))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let (url, slim) = textures_of(&profile)
+        .ok_or_else(|| anyhow::anyhow!("{} uses the default skin, there is nothing to import.", exact))?;
+
+    store_url(&url, &exact, if slim { "slim" } else { "classic" }).await
+}
+
+/// The skin address and model in a session profile's textures property.
+fn textures_of(profile: &serde_json::Value) -> Option<(String, bool)> {
+    let value = profile["properties"]
+        .as_array()?
+        .iter()
+        .find(|p| p["name"] == "textures")?["value"]
+        .as_str()?;
+    let decoded = base64_decode(value)?;
+    let textures: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    let skin = &textures["textures"]["SKIN"];
+    let url = skin["url"].as_str()?.to_string();
+    let slim = skin["metadata"]["model"] == "slim";
+    Some((url, slim))
+}
+
+/// Standard base64, the counterpart of the encoder above.
+fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(text.len() * 3 / 4);
+    let (mut buf, mut bits) = (0u32, 0u32);
+    for c in text.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' | b'\n' | b'\r' => continue,
+            _ => return None,
+        } as u32;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
+}
+
+/// The model a stored skin goes up with.
+pub fn set_variant(id: &str, variant: &str) -> anyhow::Result<()> {
+    let mut list = load_index();
+    let entry = list
+        .iter_mut()
+        .find(|s| s.id == id)
+        .ok_or_else(|| anyhow::anyhow!("That skin is not in the library."))?;
+    entry.variant = normalise_variant(variant);
+    save_index(&list)
+}
+
 pub fn rename(id: &str, name: &str) -> anyhow::Result<()> {
     if name.trim().is_empty() {
         anyhow::bail!("Please enter a name.");
@@ -238,4 +327,46 @@ pub fn delete(id: &str) -> anyhow::Result<()> {
     }
     let remaining: Vec<SavedSkin> = list.into_iter().filter(|s| s.id != id).collect();
     save_index(&remaining)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_reads_back_what_was_written() {
+        for sample in [&b""[..], b"a", b"ab", b"abc", b"{\"textures\":{}}", &[0u8, 255, 128, 7][..]] {
+            assert_eq!(base64_decode(&base64(sample)).unwrap(), sample);
+        }
+    }
+
+    #[test]
+    fn a_slim_skin_is_read_as_slim() {
+        let textures = r#"{"textures":{"SKIN":{"url":"http://textures.minecraft.net/texture/abc","metadata":{"model":"slim"}}}}"#;
+        let profile = serde_json::json!({ "properties": [{ "name": "textures", "value": base64(textures.as_bytes()) }] });
+        assert_eq!(textures_of(&profile), Some(("http://textures.minecraft.net/texture/abc".into(), true)));
+    }
+
+    #[test]
+    fn no_skin_means_nothing_to_import() {
+        let profile = serde_json::json!({ "properties": [{ "name": "textures", "value": base64(br#"{"textures":{}}"#) }] });
+        assert_eq!(textures_of(&profile), None);
+    }
+
+    /// Against Mojang itself: cargo test -- --ignored import_a_real_player
+    #[tokio::test]
+    #[ignore]
+    async fn import_a_real_player() {
+        let profile: serde_json::Value = reqwest::get(
+            "https://sessionserver.mojang.com/session/minecraft/profile/069a79f444e94726a5befca90e38aaf5",
+        )
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+        let (url, slim) = textures_of(&profile).expect("Notch has a skin");
+        assert!(url.contains("textures.minecraft.net"), "{url}");
+        assert!(!slim);
+    }
 }

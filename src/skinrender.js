@@ -777,7 +777,7 @@ export function createSkinViewer(canvas, options = {}) {
      * back to front-on while the user is looking at the back of it.
      */
     async setSkin(imageUrl, slim = false, capeUrl = "") {
-      const skin = await loadImage(imageUrl);
+      const skin = await loadSkin(imageUrl);
       state.images.skin = skin;
       state.texScale.skin = skin.width / 64;
 
@@ -882,7 +882,7 @@ const PARTS_64 = {
  * @param scale    canvas pixels per skin pixel
  */
 export async function renderSkinFlat(canvas, imageUrl, slim = false, scale = 8) {
-  const image = await loadImage(imageUrl);
+  const image = await loadSkin(imageUrl);
   const legacy = image.height === 32;
 
   const SCALE = scale;
@@ -949,6 +949,58 @@ export async function renderCape(canvas, imageUrl) {
     1 * scaleX, 1 * scaleY, 10 * scaleX, 16 * scaleY,
     0, 0, canvas.width, canvas.height
   );
+}
+
+/**
+ * Loads a skin and prepares it the way Minecraft does before drawing it.
+ *
+ * The game never draws a skin file exactly as it is. The base layer is made
+ * fully opaque, and on an old 64x32 skin a hat layer with nothing see-through
+ * in it is cleared completely - many old skins have that area filled with a
+ * solid colour, a leftover from editors that saved the whole sheet. Drawn as
+ * it is, that fill became a grey or black box around the head that nobody
+ * sees in the game. Same rules, same regions, as the game's skin loader.
+ */
+export async function loadSkin(url) {
+  const image = await loadImage(url);
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(image, 0, 0);
+
+  let data;
+  try {
+    data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  } catch {
+    // A texture the page may not read is drawn as it is
+    return image;
+  }
+
+  const legacy = image.height * 2 === image.width;
+  const k = image.width / 64; // HD skins: the same regions, scaled
+  const px = data.data;
+  const at = (x, y) => (y * canvas.width + x) * 4 + 3;
+
+  const region = (x0, y0, x1, y1, fn) => {
+    for (let y = y0 * k; y < Math.min(y1 * k, canvas.height); y++) {
+      for (let x = x0 * k; x < x1 * k; x++) fn(at(x, y));
+    }
+  };
+  const opaque = (x0, y0, x1, y1) => region(x0, y0, x1, y1, (i) => { px[i] = 255; });
+
+  opaque(0, 0, 32, 16);
+  if (legacy) {
+    // Anything see-through in it means the hat is meant; otherwise it is fill
+    let seeThrough = false;
+    region(32, 0, 64, 32, (i) => { if (px[i] < 128) seeThrough = true; });
+    if (!seeThrough) region(32, 0, 64, 32, (i) => { px[i] = 0; });
+  }
+  opaque(0, 16, 64, 32);
+  opaque(16, 48, 48, 64);
+
+  ctx.putImageData(data, 0, 0);
+  return canvas;
 }
 
 function loadImage(url) {
