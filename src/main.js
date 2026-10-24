@@ -830,15 +830,60 @@ function renderSkinLibrary() {
   stagger($("skin-library").querySelectorAll(".skin-item"));
 }
 
-async function applySavedSkin(skin) {
-  setStatus("skin-status", t("skin_uploading", { name: skin.name }));
+/**
+ * Skin changes, one at a time. Each one is a request to Mojang that takes a
+ * moment; clicking through skins used to start one per click, all at once,
+ * and they got in each other's way or ran into Mojang's limit. Now the
+ * preview follows every click straight away, and only the newest choice that
+ * came in while a change was under way is sent after it.
+ */
+let skinBusy = false;
+let skinNext = null;
+
+function queueSkinChange(change) {
+  if (skinBusy) {
+    skinNext = change;
+    return;
+  }
+  runSkinChange(change);
+}
+
+async function runSkinChange(change) {
+  skinBusy = true;
+  setStatus("skin-status", change.pending);
   try {
-    skinProfile = await invoke("apply_saved_skin", { id: skin.id, variant: "" });
-    setStatus("skin-status", t("skin_uploaded"), "success");
-    renderSkinView();
+    skinProfile = await change.run();
+    if (!skinNext) {
+      setStatus("skin-status", change.done, "success");
+      renderSkinView();
+    }
   } catch (e) {
     setStatus("skin-status", String(e), "error");
+    // Back to what the account really has
+    if (!skinNext) renderSkinView();
+  } finally {
+    skinBusy = false;
+    const next = skinNext;
+    skinNext = null;
+    if (next) runSkinChange(next);
   }
+}
+
+/** Shows a skin in the 3D preview before Mojang has it. */
+function previewSkin(url, slim) {
+  const cape = skinProfile?.capes?.find((c) => c.active);
+  skinViewer().setSkin(url, slim, cape ? cape.url : "").catch(() => {});
+  $("model-classic").classList.toggle("active", !slim);
+  $("model-slim").classList.toggle("active", slim);
+}
+
+function applySavedSkin(skin) {
+  previewSkin(skin.data_url, skin.variant === "slim");
+  queueSkinChange({
+    pending: t("skin_uploading", { name: skin.name }),
+    done: t("skin_uploaded"),
+    run: () => invoke("apply_saved_skin", { id: skin.id, variant: "" }),
+  });
 }
 
 $("btn-save-current-skin").addEventListener("click", async () => {
@@ -923,15 +968,13 @@ async function uploadSkinFile(path) {
   }
 }
 
-async function applyVariant(variant) {
-  setStatus("skin-status", "");
-  try {
-    skinProfile = await invoke("set_skin_variant", { variant });
-    setStatus("skin-status", t("skin_model_changed"), "success");
-    renderSkinView();
-  } catch (e) {
-    setStatus("skin-status", String(e), "error");
-  }
+function applyVariant(variant) {
+  if (skinProfile?.skin_url) previewSkin(skinProfile.skin_url, variant === "slim");
+  queueSkinChange({
+    pending: t("skin_model_changing"),
+    done: t("skin_model_changed"),
+    run: () => invoke("set_skin_variant", { variant }),
+  });
 }
 
 async function applyCape(capeId) {
