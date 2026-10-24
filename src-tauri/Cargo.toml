@@ -1,6 +1,6 @@
 [package]
 name = "space-client"
-version = "1.27.2"
+version = "1.27.3"
 description = "Space Client - Minecraft Java Launcher"
 edition = "2021"
 
