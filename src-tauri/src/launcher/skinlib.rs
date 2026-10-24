@@ -205,7 +205,8 @@ pub async fn store_url(url: &str, name: &str, variant: &str) -> anyhow::Result<S
     let bytes = reqwest::Client::builder()
         .user_agent("SpaceClient/0.1")
         .build()?
-        .get(url)
+        // Mojang hands the texture out as http; the same file is served over https
+        .get(url.replacen("http://", "https://", 1))
         .send()
         .await?
         .error_for_status()?
