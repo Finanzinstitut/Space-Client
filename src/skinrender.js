@@ -476,8 +476,12 @@ export function createSkinViewer(canvas, options = {}) {
 
   function resize() {
     const dpr = window.devicePixelRatio || 1;
-    const cssWidth = canvas.clientWidth || 200;
-    const cssHeight = canvas.clientHeight || 260;
+    // The frame's size, not the canvas's own: a canvas without a CSS size
+    // reports its buffer, and sizing the buffer from that grows it by the
+    // screen scaling on every frame. Capped as well, in case the frame does.
+    const box = canvas.parentElement || canvas;
+    const cssWidth = Math.min(box.clientWidth || canvas.clientWidth || 200, 1200);
+    const cssHeight = Math.min(box.clientHeight || canvas.clientHeight || 260, 1200);
     const wantW = Math.round(cssWidth * dpr);
     const wantH = Math.round(cssHeight * dpr);
     if (canvas.width !== wantW || canvas.height !== wantH) {
