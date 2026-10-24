@@ -762,21 +762,51 @@ async function loadSavedSkins() {
   }
 }
 
+/** Which library skin is on the account, as far as this launcher knows. */
+function activeSkinKey() {
+  return "spaceclient.activeSkin." + (account?.uuid || "");
+}
+function activeSkinId() {
+  try { return localStorage.getItem(activeSkinKey()) || ""; } catch { return ""; }
+}
+function rememberActiveSkin(id) {
+  try { localStorage.setItem(activeSkinKey(), id); } catch { /* only a highlight */ }
+}
+
+/** The 3D preview on its own, without touching the model buttons. */
+function showInViewer(url, slim) {
+  const cape = skinProfile?.capes?.find((c) => c.active);
+  skinViewer().setSkin(url, slim, cape ? cape.url : "").catch(() => {});
+}
+
+/** Back to the skin on the account, after hovering over another one. */
+function restoreViewer() {
+  if (skinBusy || !skinProfile?.skin_url) return;
+  showInViewer(skinProfile.skin_url, (skinProfile.variant || "").toUpperCase() === "SLIM");
+}
+
 function renderSkinLibrary() {
   const grid = $("skin-library");
   grid.innerHTML = "";
 
-  if (savedSkins.length === 0) {
+  // Search only once there is something to search through
+  const search = $("skin-search");
+  search.classList.toggle("hidden", savedSkins.length <= 8);
+  const query = savedSkins.length > 8 ? search.value.trim().toLowerCase() : "";
+  const shown = query ? savedSkins.filter((s) => s.name.toLowerCase().includes(query)) : savedSkins;
+
+  if (shown.length === 0) {
     const note = document.createElement("p");
     note.className = "empty-note";
-    note.textContent = t("skin_library_empty");
+    note.textContent = savedSkins.length === 0 ? t("skin_library_empty") : t("skin_search_none");
     grid.appendChild(note);
     return;
   }
 
-  savedSkins.forEach((skin) => {
+  const active = activeSkinId();
+  shown.forEach((skin) => {
     const item = document.createElement("div");
-    item.className = "skin-item";
+    item.className = "skin-item" + (skin.id === active ? " active" : "");
 
     const button = document.createElement("button");
     button.className = "skin-item-apply";
@@ -794,6 +824,31 @@ function renderSkinLibrary() {
     button.appendChild(label);
     button.onclick = () => applySavedSkin(skin);
     item.appendChild(button);
+
+    // Hovering shows the skin on the big figure, as it would look applied
+    item.onmouseenter = () => showInViewer(skin.data_url, skin.variant === "slim");
+    item.onmouseleave = restoreViewer;
+
+    // The model each skin goes up with, switchable right here
+    const model = document.createElement("button");
+    model.className = "skin-item-model" + (skin.variant === "slim" ? " slim" : "");
+    model.textContent = skin.variant === "slim" ? t("model_slim_short") : t("model_classic_short");
+    model.title = t("skin_model_toggle_hint");
+    model.onclick = async (event) => {
+      event.stopPropagation();
+      const variant = skin.variant === "slim" ? "classic" : "slim";
+      try {
+        await invoke("set_saved_skin_variant", { id: skin.id, variant });
+        skin.variant = variant;
+        renderSkinLibrary();
+        showInViewer(skin.data_url, variant === "slim");
+        // The skin on the account is this one: it changes with it
+        if (skin.id === activeSkinId()) applySavedSkin(skin);
+      } catch (e) {
+        setStatus("skin-status", String(e), "error");
+      }
+    };
+    item.appendChild(model);
 
     const del = document.createElement("button");
     del.className = "skin-item-remove";
@@ -829,6 +884,43 @@ function renderSkinLibrary() {
 
   stagger($("skin-library").querySelectorAll(".skin-item"));
 }
+
+$("skin-search").addEventListener("input", renderSkinLibrary);
+
+$("skin-import-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const name = $("skin-import-name").value.trim();
+  if (!name) return;
+  setStatus("skin-status", t("skin_importing", { name }));
+  try {
+    const skin = await invoke("import_player_skin", { name });
+    $("skin-import-name").value = "";
+    setStatus("skin-status", t("skin_imported", { name: skin.name }), "success");
+    await loadSavedSkins();
+    showInViewer(skin.data_url, skin.variant === "slim");
+  } catch (e) {
+    setStatus("skin-status", String(e), "error");
+  }
+});
+
+async function addSkinFiles(paths) {
+  try {
+    const added = await invoke("add_skin_files", { paths });
+    setStatus("skin-status", t("skin_files_added", { n: added }), "success");
+    await loadSavedSkins();
+  } catch (e) {
+    setStatus("skin-status", String(e), "error");
+  }
+}
+
+$("btn-add-skin-files").addEventListener("click", async () => {
+  const selected = await open({
+    multiple: true,
+    filters: [{ name: "Skin", extensions: ["png"] }],
+  });
+  if (!selected) return;
+  addSkinFiles(Array.isArray(selected) ? selected : [selected]);
+});
 
 /**
  * Skin changes, one at a time. Each one is a request to Mojang that takes a
@@ -882,7 +974,12 @@ function applySavedSkin(skin) {
   queueSkinChange({
     pending: t("skin_uploading", { name: skin.name }),
     done: t("skin_uploaded"),
-    run: () => invoke("apply_saved_skin", { id: skin.id, variant: "" }),
+    run: async () => {
+      const profile = await invoke("apply_saved_skin", { id: skin.id, variant: "" });
+      rememberActiveSkin(skin.id);
+      renderSkinLibrary();
+      return profile;
+    },
   });
 }
 
@@ -959,6 +1056,7 @@ async function uploadSkinFile(path) {
   setStatus("skin-status", t("skin_uploading", { name: fileName }));
   try {
     skinProfile = await invoke("upload_skin", { path, variant });
+    rememberActiveSkin("");
     setStatus("skin-status", t("skin_uploaded"), "success");
     renderSkinView();
     // The backend filed a copy on the way through, so the grid has a new entry.
@@ -973,7 +1071,17 @@ function applyVariant(variant) {
   queueSkinChange({
     pending: t("skin_model_changing"),
     done: t("skin_model_changed"),
-    run: () => invoke("set_skin_variant", { variant }),
+    run: async () => {
+      const profile = await invoke("set_skin_variant", { variant });
+      // The library copy of this skin goes up with the same model next time
+      const active = savedSkins.find((s) => s.id === activeSkinId());
+      if (active && active.variant !== variant) {
+        await invoke("set_saved_skin_variant", { id: active.id, variant }).catch(() => {});
+        active.variant = variant;
+        renderSkinLibrary();
+      }
+      return profile;
+    },
   });
 }
 
@@ -1636,10 +1744,15 @@ $("btn-import-modpack").addEventListener("click", async () => {
         $("skin-drop-zone").classList.remove("active");
         const paths = event.payload.paths || [];
         // A dropped .png is a skin; anything archive-shaped is a modpack.
-        const skin = paths.find((p) => p.toLowerCase().endsWith(".png"));
-        if (skin) {
+        const skins = paths.filter((p) => p.toLowerCase().endsWith(".png"));
+        if (skins.length > 1) {
           showView("skin");
-          uploadSkinFile(skin);
+          addSkinFiles(skins);
+          return;
+        }
+        if (skins.length === 1) {
+          showView("skin");
+          uploadSkinFile(skins[0]);
           return;
         }
 

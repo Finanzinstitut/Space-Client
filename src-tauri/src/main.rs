@@ -328,6 +328,35 @@ async fn delete_saved_skin(id: String) -> Result<(), String> {
     skinlib::delete(&id).map_err(|e| e.to_string())
 }
 
+/// Another player's skin, by name, into the library.
+#[tauri::command]
+async fn import_player_skin(name: String) -> Result<SavedSkin, String> {
+    skinlib::import_player(&name).await.map_err(|e| e.to_string())
+}
+
+/// PNG files into the library without applying any of them. Skips what is
+/// not a skin and says how many made it.
+#[tauri::command]
+async fn add_skin_files(paths: Vec<String>) -> Result<usize, String> {
+    let mut added = 0;
+    let mut last_error = None;
+    for path in &paths {
+        match skinlib::store_file(path, "classic").await {
+            Ok(_) => added += 1,
+            Err(e) => last_error = Some(e.to_string()),
+        }
+    }
+    match (added, last_error) {
+        (0, Some(e)) => Err(e),
+        (n, _) => Ok(n),
+    }
+}
+
+#[tauri::command]
+async fn set_saved_skin_variant(id: String, variant: String) -> Result<(), String> {
+    skinlib::set_variant(&id, &variant).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn set_skin_variant(variant: String) -> Result<SkinProfile, String> {
     skin::set_variant(variant).await.map_err(|e| e.to_string())
@@ -1482,6 +1511,9 @@ fn main() {
             rename_saved_skin,
             delete_saved_skin,
             set_skin_variant,
+            import_player_skin,
+            add_skin_files,
+            set_saved_skin_variant,
             set_cape,
             list_versions,
             list_loaders,

@@ -1104,8 +1104,11 @@ input[type="checkbox"]:checked::after {
   object-fit: contain;
   image-rendering: pixelated;
   border-radius: var(--r-sm);
-  background: var(--bg-deep);
 }
+/* Capes are drawn edge to edge and keep their backing; a skin figure stands
+   on the card itself instead of in a darker square of its own, which read
+   as a grey box around every skin. */
+.cape-thumb { background: var(--bg-deep); }
 .skin-item span, .cape-item span {
   display: block;
   margin-top: 6px;
@@ -1115,7 +1118,56 @@ input[type="checkbox"]:checked::after {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.skin-item-apply, .skin-item-remove { margin-top: 6px; }
+.skin-item-apply { width: 100%; margin-top: 14px; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; }
+
+/* Forgetting a skin: a small mark in the corner, there when the card is hovered */
+.skin-item-remove {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  line-height: 16px;
+  font-size: 13px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 140ms, background 140ms;
+}
+.skin-item:hover .skin-item-remove { opacity: 1; }
+.skin-item-remove:hover { background: rgba(255, 90, 90, 0.18); color: #ff8a8a; }
+
+/* Classic / Slim, per saved skin */
+.skin-item-model {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  border: 1px solid var(--border-hi);
+  background: var(--surface-hi);
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0.85;
+}
+.skin-item-model.slim { color: var(--accent, #b9a2ff); border-color: currentColor; }
+.skin-item-model:hover { opacity: 1; }
+
+/* The skin on the account */
+.skin-item.active { border-color: var(--accent, rgba(255, 255, 255, 0.5)); box-shadow: 0 0 0 1px var(--accent, transparent) inset; }
+
+.skin-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; align-items: center; }
+.skin-import { display: flex; gap: 6px; flex: 1 1 220px; margin: 0; }
+.skin-import input { flex: 1; min-width: 0; }
+.skin-search { flex: 1 1 160px; min-width: 0; }
 
 /*
  * An empty-state note is a grid item like any other, so without this it gets
