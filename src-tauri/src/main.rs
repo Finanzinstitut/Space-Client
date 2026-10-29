@@ -572,6 +572,10 @@ async fn install_instance_with(
     let cfg = cfg.clone();
     let mut inst = instance::get(id).ok_or_else(|| "Instance not found".to_string())?;
 
+    if inst.loader == launcher::horizon::LOADER {
+        return install_horizon(&app, &cfg, inst).await;
+    }
+
     // 1. vanilla base (client jar, libraries, assets, java)
     launcher::download::install_version(app.clone(), cfg.clone(), inst.mc_version.clone())
         .await
@@ -643,6 +647,44 @@ async fn install_instance_with(
     Ok(inst)
 }
 
+/// A Horizon instance: Minecraft 26.3 with its Java runtime (the files
+/// Horizon is prepared from), then Horizon itself, its resources, and Space
+/// Client for Horizon. See launcher/horizon.rs.
+async fn install_horizon(
+    app: &tauri::AppHandle,
+    cfg: &LauncherConfig,
+    mut inst: Instance,
+) -> Result<Instance, String> {
+    if !launcher::horizon::supported() {
+        return Err("Horizon has no build for this computer (it runs on Windows x64, Linux x64 and Apple Silicon Macs).".into());
+    }
+    launcher::download::install_version(app.clone(), cfg.clone(), launcher::horizon::MC_VERSION.to_string())
+        .await
+        .map_err(|e| e.to_string())?;
+    let progress = launcher::horizon::progress_bar(app);
+    launcher::horizon::install_game(&progress, cfg).await.map_err(|e| format!("Horizon could not be installed: {e}"))?;
+    launcher::horizon::prepare(&progress, cfg).await.map_err(|e| format!("Horizon could not be prepared: {e}"))?;
+    inst.mc_version = launcher::horizon::MC_VERSION.to_string();
+    inst.version_id = launcher::horizon::LOADER.to_string();
+    instance::upsert(inst.clone()).map_err(|e| e.to_string())?;
+    if inst.install_client_mod {
+        if let Err(e) = launcher::horizon::install_mod(&inst).await {
+            eprintln!("Space Client for Horizon not installed - {e}");
+        }
+    }
+    launcher::progress::emit_progress(
+        app,
+        launcher::progress::InstallProgress { stage: "done".into(), current: 1, total: 1, file: "Horizon".into() },
+    );
+    Ok(inst)
+}
+
+/// Whether Horizon has a build for this computer, for the loader list.
+#[tauri::command]
+fn horizon_supported() -> bool {
+    launcher::horizon::supported()
+}
+
 #[derive(serde::Serialize)]
 struct VersionChange {
     instance: Instance,
@@ -682,6 +724,9 @@ async fn change_instance_version(
     }
     if mc_version == before.mc_version {
         return Err(format!("This instance is already on Minecraft {}.", mc_version));
+    }
+    if before.loader == launcher::horizon::LOADER {
+        return Err("Horizon plays Minecraft 26.3 only.".into());
     }
 
     // Asked before anything is changed: switching to a version the loader does
@@ -762,6 +807,12 @@ async fn update_client_mod(
     if !inst.install_client_mod {
         return Err("The Space Client mod is switched off for this instance.".into());
     }
+    if inst.loader == launcher::horizon::LOADER {
+        return launcher::horizon::install_mod(&inst)
+            .await
+            .map(|tag| tag.unwrap_or_default())
+            .map_err(|e| e.to_string());
+    }
     if !launcher::clientmod::supports_loader(&inst.loader) {
         return Err(format!(
             "The Space Client mod needs Fabric or Quilt, and this instance is {}.",
@@ -798,6 +849,7 @@ async fn launch_instance(
     // rewrites files is skipped for that copy: the mods folder, the shared
     // settings and the worlds belong to the game that is already reading them.
     let already_running = state.running.lock().unwrap().contains_key(&id);
+    let horizon = inst.loader == launcher::horizon::LOADER;
 
     // The newest companion mod, before Java starts - which is the only moment
     // it can be for the same reason the profile below is applied here: Fabric
@@ -806,7 +858,15 @@ async fn launch_instance(
     // Nothing in here is fatal. Being offline, a rate limit, or a release that
     // does not fit this Minecraft version are all reasons to play with the jar
     // that is already in the folder, not reasons to refuse to start the game.
-    if !already_running
+    if horizon && !already_running && cfg.auto_update_client_mod && inst.install_client_mod {
+        match launcher::horizon::install_mod(&inst).await {
+            Ok(Some(tag)) => eprintln!("Space Client for Horizon: {tag}"),
+            Ok(None) => {}
+            Err(e) => eprintln!("Space Client for Horizon not refreshed - {e}"),
+        }
+    }
+    if !horizon
+        && !already_running
         && cfg.auto_update_client_mod
         && inst.install_client_mod
         && launcher::clientmod::supports_loader(&inst.loader)
@@ -824,7 +884,7 @@ async fn launch_instance(
     // Same reason as apply_server_profile: a second launch of an instance that
     // is already up would rewrite the mods folder under the running one.
     let active = launcher::serverprofiles::load(&id).active;
-    if !already_running && !active.is_empty() {
+    if !horizon && !already_running && !active.is_empty() {
         match launcher::serverprofiles::apply(&id, &active) {
             Ok(applied) => {
                 if !applied.failed.is_empty() {
@@ -852,15 +912,20 @@ async fn launch_instance(
 
     // Shared keybinds, server list and Space Client setup, put in place while
     // nothing is reading them
-    if !already_running {
+    // Not for Horizon: what is shared is Java's options and mods
+    if !horizon && !already_running {
         let running: Vec<String> = state.running.lock().unwrap().keys().cloned().collect();
         launcher::settings_sync::before_launch(&cfg, &inst, &running);
     }
 
     let join = launcher::serverprofiles::auto_join_address(&id);
 
-    let child = launcher::launch::launch_instance(&app, &cfg, &inst, &account, join.as_deref())
-        .map_err(|e| e.to_string())?;
+    let child = if horizon {
+        launcher::horizon::launch(&app, &cfg, &inst, &account, join.as_deref())
+    } else {
+        launcher::launch::launch_instance(&app, &cfg, &inst, &account, join.as_deref())
+    }
+    .map_err(|e| e.to_string())?;
 
     instance::mark_played(&id);
     static NEXT_RUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -1529,6 +1594,7 @@ fn main() {
             install_instance,
             change_instance_version,
             update_client_mod,
+            horizon_supported,
             launch_instance,
             bedrock_info,
             set_edition,
