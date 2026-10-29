@@ -1,6 +1,6 @@
 [package]
 name = "space-client"
-version = "1.27.3"
+version = "1.28.0"
 description = "Space Client - Minecraft Java Launcher"
 edition = "2021"
 
@@ -24,6 +24,11 @@ hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
 zip = "0.6"
 anyhow = "1"
+# Horizon: its signed release checksums, and its .tar.gz builds
+ed25519-dalek = "2"
+base64 = "0.22"
+tar = "0.4"
+flate2 = "1"
 
 [[bin]]
 name = "space-client"

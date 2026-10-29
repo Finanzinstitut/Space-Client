@@ -334,12 +334,24 @@ pub fn launch_instance(
     cmd.arg(&main_class);
     cmd.args(&game_args);
     cmd.current_dir(&game_dir);
+
+    spawn_logged(app, instance, cmd, &format!("Java at '{}'", java_bin))
+}
+
+/// Starts the game's process with its output going to a file in the instance
+/// folder and, at the same time, to the live console in the launcher. Shared
+/// by Java's Minecraft and Horizon; `what` names the program in errors.
+pub fn spawn_logged(
+    app: &AppHandle,
+    instance: &Instance,
+    mut cmd: std::process::Command,
+    what: &str,
+) -> anyhow::Result<Child> {
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(|e| {
-        anyhow::anyhow!("Could not start Java at '{}': {}", java_bin, e)
-    })?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("Could not start {}: {}", what, e))?;
 
     // Game output goes to a file in the instance folder and, at the same time,
     // to the live console in the launcher.
@@ -405,7 +417,7 @@ pub fn launch_instance(
                 })
                 .unwrap_or_default();
             anyhow::bail!(
-                "Minecraft quit immediately ({}). Last output:\n{}",
+                "The game quit immediately ({}). Last output:\n{}",
                 status,
                 tail
             );

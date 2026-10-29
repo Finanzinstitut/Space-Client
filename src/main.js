@@ -412,7 +412,7 @@ function renderInstances() {
     // the version, libraries and loader a reinstall would fetch again.
     const canHaveMod =
       inst.install_client_mod !== false &&
-      (inst.loader === "fabric" || inst.loader === "quilt");
+      ["fabric", "quilt", "horizon"].includes(inst.loader);
     if (!installed) {
       const installBtn = document.createElement("button");
       installBtn.className = "btn secondary small";
@@ -1780,7 +1780,7 @@ async function fillLoaderVersions(selectId, loader, mcVersion, preselect = "") {
   auto.textContent = t("loader_auto");
   select.appendChild(auto);
 
-  if (!loader || loader === "vanilla" || !mcVersion) return;
+  if (!loader || loader === "vanilla" || loader === "horizon" || !mcVersion) return;
 
   const loading = document.createElement("option");
   loading.textContent = t("loader_loading");
@@ -1825,7 +1825,8 @@ async function fillLoaderVersions(selectId, loader, mcVersion, preselect = "") {
 }
 
 function toggleLoaderVersionField(fieldId, loader) {
-  $(fieldId).classList.toggle("hidden", !loader || loader === "vanilla");
+  // Horizon has no loader versions: it is its own game
+  $(fieldId).classList.toggle("hidden", !loader || loader === "vanilla" || loader === "horizon");
 }
 
 // ---------------- edit instance ----------------
@@ -1842,7 +1843,7 @@ async function openEditModal(inst) {
   toggleLoaderVersionField("edit-loader-version-field", inst.loader);
 
   // The companion mod is a Fabric mod; Forge and NeoForge cannot load it.
-  const modSupported = inst.loader === "fabric" || inst.loader === "quilt";
+  const modSupported = ["fabric", "quilt", "horizon"].includes(inst.loader);
   $("edit-clientmod-field").classList.toggle("hidden", !modSupported);
   $("edit-client-mod").checked = inst.install_client_mod !== false;
   $("edit-backdrop").classList.remove("hidden");
@@ -2017,6 +2018,12 @@ function updateHudCompatNote() {
     return;
   }
 
+  if (loader === "horizon") {
+    note.textContent = t("hud_horizon");
+    note.className = "compat-note ok";
+    return;
+  }
+
   const supported = modSupports(version, loader);
   const flavour = loader === "quilt" ? "fabric" : loader;
   const versions = HUD_BUILDS.filter(([, l]) => l === flavour).map(([mc]) => mc);
@@ -2029,7 +2036,23 @@ function updateHudCompatNote() {
   note.className = "compat-note " + (supported ? "ok" : "warn");
 }
 
+/// Horizon plays 26.3 and nothing else: picking it pins the version.
+function pinHorizonVersion() {
+  const horizon = $("new-loader").value === "horizon";
+  const select = $("new-version");
+  if (horizon) {
+    if (![...select.options].some((o) => o.value === "26.3")) {
+      const option = document.createElement("option");
+      option.value = option.textContent = "26.3";
+      select.appendChild(option);
+    }
+    select.value = "26.3";
+  }
+  select.disabled = horizon;
+}
+
 async function refreshNewLoaderVersions() {
+  pinHorizonVersion();
   const loader = $("new-loader").value;
   toggleLoaderVersionField("new-loader-version-field", loader);
   await fillLoaderVersions("new-loader-version", loader, $("new-version").value);
@@ -2052,6 +2075,13 @@ $("btn-new-instance").addEventListener("click", () => {
   setStatus("create-status", "");
   $("modal-backdrop").classList.remove("hidden");
   refreshNewLoaderVersions();
+  // Only offered where Horizon has a build
+  invoke("horizon_supported")
+    .then((ok) => {
+      const option = $("new-loader").querySelector('option[value="horizon"]');
+      if (option) option.hidden = option.disabled = !ok;
+    })
+    .catch(() => {});
 });
 
 $("btn-cancel-create").addEventListener("click", () => {
@@ -2095,7 +2125,7 @@ $("btn-confirm-create").addEventListener("click", async () => {
     // known. Vanilla instances are skipped rather than failed: there is nowhere
     // for a mod to go, and refusing to create the instance over a checkbox
     // would be a poor trade.
-    if (wantsCosmetica && $("new-loader").value !== "vanilla") {
+    if (wantsCosmetica && !["vanilla", "horizon"].includes($("new-loader").value)) {
       await installCosmetica(inst);
     }
   } catch (e) {
