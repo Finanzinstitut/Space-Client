@@ -18,6 +18,7 @@
 use crate::launcher::config::LauncherConfig;
 use crate::launcher::instance::{self, Instance};
 use serde::Serialize;
+use sha2::Digest;
 use std::path::{Path, PathBuf};
 
 /// Single files, relative to .minecraft.
@@ -328,7 +329,9 @@ pub fn apply_to_horizon(cfg: &LauncherConfig, from: &Instance, to: &Instance) ->
         let dst = game.join("options.txt");
         let own = std::fs::read_to_string(&dst).ok();
         let temp = dst.with_extension("txt.sync-tmp");
-        std::fs::write(&temp, merge_for_horizon(&shared, own.as_deref()))?;
+        // The whole file, as a Java instance gets it: Horizon reads vanilla's
+        // options.txt, and what only Java knows it leaves alone
+        std::fs::write(&temp, merge_options(&shared, own.as_deref()))?;
         std::fs::rename(&temp, &dst)?;
         count += 1;
         for name in pack_files(&shared) {
@@ -346,7 +349,87 @@ pub fn apply_to_horizon(cfg: &LauncherConfig, from: &Instance, to: &Instance) ->
             }
         }
     }
+    match space_client_to_horizon(from, to) {
+        Ok(true) => count += 1,
+        Ok(false) => {}
+        Err(e) => eprintln!("settings sync: Space Client settings not carried into {} - {e}", to.name),
+    }
     Ok(count)
+}
+
+/// Java's Space Client modules and the parts of Space Client for Horizon
+/// that are the same thing: (Java module id, Horizon part).
+const HORIZON_PARTS: &[(&str, &str)] = &[
+    ("fps", "fps"),
+    ("cps", "cps"),
+    ("coordinates", "coordinates"),
+    ("direction", "direction"),
+    ("daytime", "daytime"),
+    ("speedometer", "speed"),
+    ("session", "session"),
+    ("health", "health"),
+    ("aim", "looking_at"),
+    ("compass", "compass"),
+    ("keystrokes", "keystrokes"),
+    ("zoom", "zoom"),
+    ("music", "music"),
+];
+
+/// Space Client's own setup, from the source's config/spaceclient.json into
+/// Space Client for Horizon: which modules are on, and the zoom key. Only
+/// when that file changed since the last time, so what is switched in
+/// Horizon's /sc stays until the Java setup itself changes.
+pub fn space_client_to_horizon(from: &Instance, to: &Instance) -> anyhow::Result<bool> {
+    let source = from.game_dir().join("config").join("spaceclient.json");
+    let Ok(text) = std::fs::read_to_string(&source) else { return Ok(false) };
+    let stamp = format!("{:x}", sha2::Sha256::digest(text.as_bytes()));
+    let marker = to.dir().join(".spaceclient-horizon-sync");
+    if std::fs::read_to_string(&marker).map(|m| m.trim() == stamp).unwrap_or(false) {
+        return Ok(false);
+    }
+    let json: serde_json::Value = serde_json::from_str(&text)?;
+    let modules = &json["modules"];
+
+    let data = to.game_dir().join("horizon-mods").join(".horizon-mod-data").join("spaceclient");
+    std::fs::create_dir_all(&data)?;
+    let settings = data.join("settings");
+    let own = std::fs::read_to_string(&settings).unwrap_or_default();
+    let mut lines: Vec<String> = own.lines().map(str::to_string).collect();
+    for (java, part) in HORIZON_PARTS {
+        let Some(on) = modules[*java]["enabled"].as_bool() else { continue };
+        let line = format!("{part}={on}");
+        match lines.iter().position(|l| l.split('=').next() == Some(part)) {
+            Some(i) => lines[i] = line,
+            None => lines.push(line),
+        }
+    }
+    std::fs::write(&settings, lines.join("\n") + "\n")?;
+
+    // The zoom key, as the Java module names it ("C", "CTRL", ...)
+    if let Some(key) = modules["zoom"]["settings"]["key"].as_str().and_then(horizon_key) {
+        let file = to.game_dir().join("horizon-mods.txt");
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        let mut out: Vec<String> = text
+            .lines()
+            .filter(|l| !l.starts_with("key.spaceclient.zoom:"))
+            .map(str::to_string)
+            .collect();
+        out.push(format!("key.spaceclient.zoom:{key}"));
+        std::fs::write(&file, out.join("\n") + "\n")?;
+    }
+    std::fs::write(&marker, stamp)?;
+    Ok(true)
+}
+
+/// A key as the Java zoom module stores it, as Horizon's options name it.
+fn horizon_key(java: &str) -> Option<String> {
+    match java {
+        "CTRL" => Some("key.keyboard.left.control".into()),
+        "ALT" => Some("key.keyboard.left.alt".into()),
+        "BINDING" | "" => None,
+        letter if letter.len() == 1 => Some(format!("key.keyboard.{}", letter.to_lowercase())),
+        _ => None,
+    }
 }
 
 /// before_launch for a Horizon instance: the source refreshed as usual,
@@ -413,6 +496,33 @@ pub fn sync_all(cfg: &LauncherConfig, running: &[String]) -> anyhow::Result<u32>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn space_client_modules_carry_into_horizon() {
+        let root = std::env::temp_dir().join(format!("sc-sync-h-{}", uuid::Uuid::new_v4()));
+        let java = inst("java", &root.join("java"), 3, 1);
+        let mut horizon = inst("hz", &root.join("hz"), 1, 2);
+        horizon.loader = "horizon".into();
+        std::fs::create_dir_all(java.game_dir().join("config")).unwrap();
+        std::fs::write(
+            java.game_dir().join("config/spaceclient.json"),
+            r#"{"modules":{"fps":{"enabled":false},"speedometer":{"enabled":true},"zoom":{"enabled":true,"settings":{"key":"V"}}}}"#,
+        )
+        .unwrap();
+        let data = horizon.game_dir().join("horizon-mods/.horizon-mod-data/spaceclient");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("settings"), "fps=true\ncps=true\n").unwrap();
+        std::fs::write(horizon.game_dir().join("horizon-mods.txt"), "mod.spaceclient:true\n").unwrap();
+
+        assert!(space_client_to_horizon(&java, &horizon).unwrap());
+        let settings = std::fs::read_to_string(data.join("settings")).unwrap();
+        assert!(settings.contains("fps=false") && settings.contains("cps=true") && settings.contains("speed=true"));
+        let mods = std::fs::read_to_string(horizon.game_dir().join("horizon-mods.txt")).unwrap();
+        assert!(mods.contains("mod.spaceclient:true") && mods.contains("key.spaceclient.zoom:key.keyboard.v"));
+        // Unchanged Java setup: nothing is written again
+        assert!(!space_client_to_horizon(&java, &horizon).unwrap());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn horizon_takes_keybinds_and_packs_only() {
