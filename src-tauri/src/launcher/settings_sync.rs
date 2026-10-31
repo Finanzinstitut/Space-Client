@@ -67,7 +67,10 @@ pub fn source(cfg: &LauncherConfig, all: &[Instance]) -> Option<Instance> {
             return Some(found.clone());
         }
     }
+    // Horizon instances only take: their options are Horizon's, and the
+    // other way round they would hand Java games settings it never wrote
     all.iter()
+        .filter(|i| i.loader != crate::launcher::horizon::LOADER)
         .filter(|i| i.game_dir().join("options.txt").exists())
         .max_by_key(|i| (i.play_count, i.last_played))
         .cloned()
@@ -257,6 +260,116 @@ pub fn before_launch(cfg: &LauncherConfig, target: &Instance, running: &[String]
     }
 }
 
+/// The lines of options.txt a Horizon instance takes from the shared copy:
+/// the keybinds and the chosen resource packs. Only those - the rest of a
+/// Java game's options (graphics, render distance) are for Java's renderer,
+/// and Horizon keeps its own.
+const HORIZON_KEYS: &[&str] = &["key_", "resourcePacks:", "incompatibleResourcePacks:"];
+
+fn takes_for_horizon(line: &str) -> bool {
+    HORIZON_KEYS.iter().any(|k| line.starts_with(k))
+}
+
+/// The shared keybind and pack lines laid over a Horizon instance's own
+/// options.txt: a line with the same key is replaced, a missing one added,
+/// everything else stays as Horizon wrote it.
+pub fn merge_for_horizon(shared: &str, target: Option<&str>) -> String {
+    let wanted: Vec<&str> = shared.lines().filter(|l| takes_for_horizon(l)).collect();
+    let key = |line: &str| line.split_once(':').map(|(k, _)| k.to_string()).unwrap_or_default();
+    let mut out = String::new();
+    let mut written = std::collections::HashSet::new();
+    for line in target.unwrap_or("").lines() {
+        let k = key(line);
+        if let Some(new) = wanted.iter().find(|w| key(w) == k) {
+            out.push_str(new);
+            written.insert(k);
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    for line in wanted {
+        if written.insert(key(line)) {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// The pack files a list of packs names (`file/<name>` entries).
+fn pack_files(options: &str) -> Vec<String> {
+    let Some(value) = options.lines().find_map(|l| l.strip_prefix("resourcePacks:")) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<String>>(value.trim())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|id| id.strip_prefix("file/").map(str::to_string))
+        .filter(|name| !name.contains("..") && !name.contains('/') && !name.contains('\\'))
+        .collect()
+}
+
+/// A Horizon instance's share: the server list, the keybinds, the chosen
+/// resource packs and their files, copied from the source instance's
+/// resourcepacks folder when the instance lacks them or has another size.
+pub fn apply_to_horizon(cfg: &LauncherConfig, from: &Instance, to: &Instance) -> anyhow::Result<u32> {
+    let dir = shared_dir(cfg);
+    let game = to.game_dir();
+    std::fs::create_dir_all(&game)?;
+    let mut count = 0;
+    let servers = dir.join("servers.dat");
+    if servers.is_file() {
+        copy_file(&servers, &game.join("servers.dat"))?;
+        count += 1;
+    }
+    let shared = dir.join("options.txt");
+    if let Ok(shared) = std::fs::read_to_string(&shared) {
+        let dst = game.join("options.txt");
+        let own = std::fs::read_to_string(&dst).ok();
+        let temp = dst.with_extension("txt.sync-tmp");
+        std::fs::write(&temp, merge_for_horizon(&shared, own.as_deref()))?;
+        std::fs::rename(&temp, &dst)?;
+        count += 1;
+        for name in pack_files(&shared) {
+            let src = from.game_dir().join("resourcepacks").join(&name);
+            let dst = game.join("resourcepacks").join(&name);
+            if src.is_dir() {
+                if !dst.exists() {
+                    copy_dir(&src, &dst)?;
+                }
+            } else if src.is_file() {
+                let same = std::fs::metadata(&dst).ok().map(|m| m.len()) == std::fs::metadata(&src).ok().map(|m| m.len());
+                if !same {
+                    copy_file(&src, &dst)?;
+                }
+            }
+        }
+    }
+    Ok(count)
+}
+
+/// before_launch for a Horizon instance: the source refreshed as usual,
+/// then only Horizon's share handed over.
+pub fn before_launch_horizon(cfg: &LauncherConfig, target: &Instance, running: &[String]) {
+    if !cfg.sync_settings {
+        return;
+    }
+    let all = instance::load_all();
+    let Some(from) = source(cfg, &all) else { return };
+    if from.id == target.id {
+        return;
+    }
+    if !running.contains(&from.id) {
+        if let Err(e) = capture(cfg, &from) {
+            eprintln!("settings sync: could not read {} - {}", from.name, e);
+        }
+    }
+    if let Err(e) = apply_to_horizon(cfg, &from, target) {
+        eprintln!("settings sync: could not write into {} - {}", target.name, e);
+    }
+}
+
 /// Run when a game closes: if it was the source, what it changed is taken
 /// into the shared folder straight away.
 pub fn after_exit(cfg: &LauncherConfig, closed: &str) {
@@ -287,7 +400,11 @@ pub fn sync_all(cfg: &LauncherConfig, running: &[String]) -> anyhow::Result<u32>
         if inst.id == from.id || running.contains(&inst.id) {
             continue;
         }
-        apply(cfg, inst)?;
+        if inst.loader == crate::launcher::horizon::LOADER {
+            apply_to_horizon(cfg, &from, inst)?;
+        } else {
+            apply(cfg, inst)?;
+        }
         done += 1;
     }
     Ok(done)
@@ -296,6 +413,19 @@ pub fn sync_all(cfg: &LauncherConfig, running: &[String]) -> anyhow::Result<u32>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn horizon_takes_keybinds_and_packs_only() {
+        let shared = "version:4700\nkey_key.jump:key.keyboard.space\nfov:0.9\nresourcePacks:[\"vanilla\",\"file/Faithful.zip\"]\n";
+        let target = "version:4800\nfov:0.2\nkey_key.jump:key.keyboard.j\n";
+        let merged = merge_for_horizon(shared, Some(target));
+        assert_eq!(
+            merged,
+            "version:4800\nfov:0.2\nkey_key.jump:key.keyboard.space\nresourcePacks:[\"vanilla\",\"file/Faithful.zip\"]\n"
+        );
+        assert_eq!(pack_files(shared), vec!["Faithful.zip".to_string()]);
+        assert!(pack_files("resourcePacks:[\"file/../x\"]").is_empty());
+    }
 
     #[test]
     fn options_keep_the_targets_own_version_line() {
