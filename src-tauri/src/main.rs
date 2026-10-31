@@ -667,10 +667,10 @@ async fn install_horizon(
     inst.mc_version = launcher::horizon::MC_VERSION.to_string();
     inst.version_id = launcher::horizon::LOADER.to_string();
     instance::upsert(inst.clone()).map_err(|e| e.to_string())?;
-    if inst.install_client_mod {
-        if let Err(e) = launcher::horizon::install_mod(&inst).await {
-            eprintln!("Space Client for Horizon not installed - {e}");
-        }
+    match launcher::horizon::install_mod(cfg, &inst) {
+        Ok(Some(note)) => eprintln!("{note}"),
+        Ok(None) => {}
+        Err(e) => eprintln!("Space Client for Horizon not set up - {e}"),
     }
     launcher::progress::emit_progress(
         app,
@@ -808,9 +808,11 @@ async fn update_client_mod(
         return Err("The Space Client mod is switched off for this instance.".into());
     }
     if inst.loader == launcher::horizon::LOADER {
-        return launcher::horizon::install_mod(&inst)
-            .await
-            .map(|tag| tag.unwrap_or_default())
+        // Space Client is built into the game: updating it is updating Horizon
+        let cfg = state.config.lock().unwrap().clone();
+        launcher::horizon::update_before_launch(&app, &cfg, false).await.map_err(|e| e.to_string())?;
+        return launcher::horizon::install_mod(&cfg, &inst)
+            .map(|note| note.unwrap_or_else(|| "Horizon + Space Client".into()))
             .map_err(|e| e.to_string());
     }
     if !launcher::clientmod::supports_loader(&inst.loader) {
@@ -858,11 +860,23 @@ async fn launch_instance(
     // Nothing in here is fatal. Being offline, a rate limit, or a release that
     // does not fit this Minecraft version are all reasons to play with the jar
     // that is already in the folder, not reasons to refuse to start the game.
-    if horizon && !already_running && cfg.auto_update_client_mod && inst.install_client_mod {
-        match launcher::horizon::install_mod(&inst).await {
-            Ok(Some(tag)) => eprintln!("Space Client for Horizon: {tag}"),
+    // Horizon: the newest build (Space Client is in the game itself) and its
+    // resources, so an instance made before an update just plays. Not while
+    // another Horizon game is open: they share the game's folder.
+    if horizon && !already_running {
+        let others = {
+            let running = state.running.lock().unwrap();
+            instance::load_all()
+                .iter()
+                .any(|i| i.loader == launcher::horizon::LOADER && running.contains_key(&i.id))
+        };
+        launcher::horizon::update_before_launch(&app, &cfg, others)
+            .await
+            .map_err(|e| format!("Horizon could not be installed: {e}"))?;
+        match launcher::horizon::install_mod(&cfg, &inst) {
+            Ok(Some(note)) => eprintln!("{note}"),
             Ok(None) => {}
-            Err(e) => eprintln!("Space Client for Horizon not refreshed - {e}"),
+            Err(e) => eprintln!("Space Client for Horizon not set up - {e}"),
         }
     }
     if !horizon

@@ -4,20 +4,29 @@
 //! An instance with the loader "horizon" plays that game instead of Java's.
 //! The launcher does here what Horizon's own launcher does:
 //!
-//! 1. **The game.** The current Nightly for this platform, from Horizon's
-//!    GitHub releases. Its checksum list must carry a signature by Horizon's
-//!    release key for the nightly channel, and the archive must match it; a
-//!    download that fails either is not installed. Kept once, in
-//!    `<install dir>/horizon/game`, for every Horizon instance.
+//! 1. **The game.** Horizon's current Nightly for this platform with Space
+//!    Client built in. Horizon runs no WebAssembly mods any more: a mod is
+//!    compiled into the game. Space Client's CI (Space-Client-Mod,
+//!    `.github/workflows/horizon.yml`) builds each Nightly, from the source
+//!    that Nightly ships and checked against Horizon's signature, with the
+//!    Space Client bundle in it, and publishes Horizon's own archives with
+//!    only their game program replaced, under the release tag `horizon`.
+//!    Until that release exists, or where it cannot be reached, the plain
+//!    Nightly comes from Horizon's GitHub releases instead: its checksum
+//!    list must carry a signature by Horizon's release key for the nightly
+//!    channel. Either way the archive must match its checksum. Kept once, in
+//!    `<install dir>/horizon/game`, for every Horizon instance, and brought
+//!    up to date each time a Horizon instance is played.
 //! 2. **Its resources.** Horizon ships no Minecraft files: `horizon-prepare`
 //!    builds them from the player's own copy - here, the 26.3 the launcher
 //!    installs for a Java instance anyway, with the version file as Mojang
 //!    serves it, which the preparer checks - and from the 26.3 server jar.
-//!    It needs Java 25, the runtime 26.3 itself uses. Done once per game
-//!    build.
-//! 3. **Space Client.** Horizon runs no Java mods; Space Client for Horizon
-//!    is a WebAssembly mod (`spaceclient-horizon.hmod` on the mod's
-//!    releases), put into the instance's `horizon-mods/` and turned on.
+//!    It needs Java 25, the runtime 26.3 itself uses. Done again only when
+//!    an update brings a different preparer.
+//! 3. **Space Client.** In the game itself (1.); per instance it is turned
+//!    on or off in `horizon-mods.txt`. The old WebAssembly mod is removed
+//!    from the instance's `horizon-mods/`, where Horizon would only list it
+//!    as stopped.
 //! 4. **Playing.** The game starts in the instance's own folder with the
 //!    signed-in account handed over in a session file it reads once and
 //!    deletes, never on the command line.
@@ -46,8 +55,10 @@ const SIGNATURE: &str = "SHA256SUMS.sig";
 /// one base64 Ed25519 public key each.
 const RELEASE_KEYS: [&str; 1] = ["MU4oiIQcCxkZvbwSjjXs7SySCuM6ywRQ3nGaJYZG0gw="];
 
+/// Where Space Client's build of Horizon is published: Space-Client-Mod's
+/// release `horizon` (see the module comment).
 const MOD_REPO: &str = "Finanzinstitut/Space-Client-Mod";
-const MOD_ASSET: &str = "spaceclient-horizon.hmod";
+const MOD_CHANNEL: &str = "horizon";
 const MOD_ID: &str = "spaceclient";
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -90,7 +101,18 @@ fn installed_marker(cfg: &LauncherConfig) -> PathBuf {
     root(cfg).join("installed.txt")
 }
 
-/// The same, for the build its resources were prepared for.
+/// Whether the installed game is Space Client's build ("spaceclient") or
+/// Horizon's plain Nightly ("nightly").
+fn flavour_marker(cfg: &LauncherConfig) -> PathBuf {
+    root(cfg).join("flavour.txt")
+}
+
+/// Whether the installed game has Space Client built in.
+pub fn has_space_client(cfg: &LauncherConfig) -> bool {
+    read_marker(&flavour_marker(cfg)) == "spaceclient"
+}
+
+/// The SHA-256 of the preparer its resources were prepared with.
 fn prepared_marker(cfg: &LauncherConfig) -> PathBuf {
     root(cfg).join("prepared.txt")
 }
@@ -123,6 +145,53 @@ fn asset_url(name: &str) -> String {
     format!("https://github.com/{REPO}/releases/download/{CHANNEL}/{name}")
 }
 
+fn mod_asset_url(name: &str) -> String {
+    format!("https://github.com/{MOD_REPO}/releases/download/{MOD_CHANNEL}/{name}")
+}
+
+/// A checksum list, `<sha256>  <file>` per line: `(file, hex)` pairs.
+/// Horizon's is checked for its signature first (verify_sums); Space
+/// Client's build comes from its own repository's release.
+pub fn parse_sums(sums: &[u8]) -> anyhow::Result<Vec<(String, String)>> {
+    let text = std::str::from_utf8(sums).map_err(|_| anyhow::anyhow!("{SUMS} is not text"))?;
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|line| {
+            let (hex, name) = line
+                .split_once(' ')
+                .ok_or_else(|| anyhow::anyhow!("{SUMS}: {line:?} is not `<sha256>  <file>`"))?;
+            let name = name.trim_start_matches([' ', '*']);
+            if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) || name.is_empty() {
+                anyhow::bail!("{SUMS}: {line:?} is not `<sha256>  <file>`");
+            }
+            Ok((name.to_string(), hex.to_ascii_lowercase()))
+        })
+        .collect()
+}
+
+/// Where the game comes from: Space Client's build when it is published,
+/// else Horizon's signed Nightly. (download URL, SHA-256, flavour)
+async fn pick_source(client: &reqwest::Client, asset: &str) -> anyhow::Result<(String, String, &'static str)> {
+    match client.get(mod_asset_url(SUMS)).send().await.and_then(|r| r.error_for_status()) {
+        Ok(response) => {
+            let sums = response.bytes().await?;
+            if let Some((_, hex)) = parse_sums(&sums)?.into_iter().find(|(name, _)| name == asset) {
+                return Ok((mod_asset_url(asset), hex, "spaceclient"));
+            }
+            eprintln!("horizon: Space Client's build has no {asset}; taking Horizon's Nightly");
+        }
+        Err(e) => eprintln!("horizon: no Space Client build of Horizon reachable ({e}); taking Horizon's Nightly"),
+    }
+    let sums = client.get(asset_url(SUMS)).send().await?.error_for_status()?.bytes().await?;
+    let signature = client.get(asset_url(SIGNATURE)).send().await?.error_for_status()?.text().await?;
+    let digest = verify_sums(&sums, &signature)?
+        .into_iter()
+        .find(|(name, _)| name == asset)
+        .map(|(_, hex)| hex)
+        .ok_or_else(|| anyhow::anyhow!("{asset} is not in Horizon's signed checksums."))?;
+    Ok((asset_url(asset), digest, "nightly"))
+}
+
 /// The checksum list, once one of Horizon's keys is found to have signed it
 /// for the nightly channel: `(file name, SHA-256 hex)` pairs. The signed
 /// message is `horizon release nightly\n` and the list's bytes, so a list
@@ -150,35 +219,16 @@ pub fn verify_sums(sums: &[u8], signature: &str) -> anyhow::Result<Vec<(String, 
              The download may have been tampered with."
         );
     }
-    let text = std::str::from_utf8(sums).map_err(|_| anyhow::anyhow!("{SUMS} is not text"))?;
-    text.lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|line| {
-            let (hex, name) = line
-                .split_once(' ')
-                .ok_or_else(|| anyhow::anyhow!("{SUMS}: {line:?} is not `<sha256>  <file>`"))?;
-            let name = name.trim_start_matches([' ', '*']);
-            if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) || name.is_empty() {
-                anyhow::bail!("{SUMS}: {line:?} is not `<sha256>  <file>`");
-            }
-            Ok((name.to_string(), hex.to_ascii_lowercase()))
-        })
-        .collect()
+    parse_sums(sums)
 }
 
-/// The newest Nightly, unless the installed game already is it. Returns
-/// whether a new build went in.
+/// The newest build (see the module comment), unless the installed game
+/// already is it. Returns whether a new build went in.
 pub async fn install_game(app: &Progress, cfg: &LauncherConfig) -> anyhow::Result<bool> {
     let asset = ASSET.ok_or_else(|| anyhow::anyhow!("Horizon has no build for this computer."))?;
     let client = http()?;
     say(app, "Checking for the newest Horizon build");
-    let sums = client.get(asset_url(SUMS)).send().await?.error_for_status()?.bytes().await?;
-    let signature = client.get(asset_url(SIGNATURE)).send().await?.error_for_status()?.text().await?;
-    let digest = verify_sums(&sums, &signature)?
-        .into_iter()
-        .find(|(name, _)| name == asset)
-        .map(|(_, hex)| hex)
-        .ok_or_else(|| anyhow::anyhow!("{asset} is not in Horizon's signed checksums."))?;
+    let (url, digest, flavour) = pick_source(&client, asset).await?;
 
     let game = game_dir(cfg);
     let client_bin = game.join(format!("horizon-client{EXE}"));
@@ -190,7 +240,7 @@ pub async fn install_game(app: &Progress, cfg: &LauncherConfig) -> anyhow::Resul
     let root = root(cfg);
     std::fs::create_dir_all(&root)?;
     let archive = root.join("download.partial");
-    let mut response = client.get(asset_url(asset)).send().await?.error_for_status()?;
+    let mut response = client.get(&url).send().await?.error_for_status()?;
     let total = response.content_length().unwrap_or(0);
     let mut file = std::fs::File::create(&archive)?;
     let mut hash = Sha256::new();
@@ -231,7 +281,35 @@ pub async fn install_game(app: &Progress, cfg: &LauncherConfig) -> anyhow::Resul
     std::fs::rename(&top, &game)?;
     let _ = std::fs::remove_dir_all(&unpacked);
     std::fs::write(installed_marker(cfg), &digest)?;
+    std::fs::write(flavour_marker(cfg), flavour)?;
     Ok(true)
+}
+
+/// Before a Horizon instance plays: the newest build and its resources, so
+/// an instance made before an update needs nothing done. Offline or a failed
+/// update plays the game that is there; only a game that is missing stops
+/// the start. `others_running`: another Horizon game is open, whose files
+/// are not replaced under it.
+pub async fn update_before_launch(app: &AppHandle, cfg: &LauncherConfig, others_running: bool) -> anyhow::Result<()> {
+    let installed = game_dir(cfg).join(format!("horizon-client{EXE}")).exists();
+    if others_running && installed {
+        return Ok(());
+    }
+    let progress = progress_bar(app);
+    let result = async {
+        install_game(&progress, cfg).await?;
+        prepare(&progress, cfg).await
+    }
+    .await;
+    emit_progress(app, InstallProgress { stage: "done".into(), current: 1, total: 1, file: "Horizon".into() });
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) if installed && resources(cfg).is_dir() => {
+            eprintln!("horizon: not updated, playing the installed build - {e}");
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn unpack(archive: &Path, name: &str, to: &Path) -> anyhow::Result<()> {
@@ -274,7 +352,10 @@ async fn raw_version_json(cfg: &LauncherConfig) -> anyhow::Result<serde_json::Va
 /// Builds Horizon's resources from the launcher's own Minecraft 26.3, once
 /// per game build. Each line the preparer prints goes to the progress bar.
 pub async fn prepare(app: &Progress, cfg: &LauncherConfig) -> anyhow::Result<()> {
-    let installed = read_marker(&installed_marker(cfg));
+    let preparer = game_dir(cfg).join(format!("horizon-prepare{EXE}"));
+    // The preparer's own hash: a build that changes only the game (Space
+    // Client's, or a Nightly with the same preparer) keeps the resources
+    let installed = std::fs::read(&preparer).map(|b| hex::encode(Sha256::digest(&b))).unwrap_or_default();
     if !installed.is_empty() && read_marker(&prepared_marker(cfg)) == installed && resources(cfg).is_dir() {
         return Ok(());
     }
@@ -377,52 +458,31 @@ fn hide_window(cmd: &mut Command) {
 #[cfg(not(windows))]
 fn hide_window(_cmd: &mut Command) {}
 
-/// Space Client for Horizon, newest release, into the instance and on.
-/// Returns the release's tag when a new file went in.
-pub async fn install_mod(instance: &Instance) -> anyhow::Result<Option<String>> {
-    let client = http()?;
-    let releases: Vec<serde_json::Value> = client
-        .get(format!("https://api.github.com/repos/{MOD_REPO}/releases?per_page=20"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    let found = releases
-        .iter()
-        .filter(|r| !r["draft"].as_bool().unwrap_or(false) && !r["prerelease"].as_bool().unwrap_or(false))
-        .find_map(|r| {
-            let asset = r["assets"].as_array()?.iter().find(|a| a["name"] == MOD_ASSET)?;
-            Some((
-                r["tag_name"].as_str().unwrap_or_default().to_string(),
-                asset["browser_download_url"].as_str()?.to_string(),
-            ))
-        });
-    let Some((tag, url)) = found else { return Ok(None) };
-
+/// Space Client in an instance: on in `horizon-mods.txt` when the game has
+/// it built in, and the old WebAssembly mod out of `horizon-mods/`, where
+/// Horizon only lists it as stopped. Returns a line for the player when
+/// the game is not Space Client's build yet.
+pub fn install_mod(cfg: &LauncherConfig, instance: &Instance) -> anyhow::Result<Option<String>> {
     let mods = instance.game_dir().join("horizon-mods");
-    std::fs::create_dir_all(&mods)?;
-    let target = mods.join(format!("{MOD_ID}.hmod"));
-    let marker = mods.join(".spaceclient-release");
-    enable_mod(&instance.game_dir())?;
-    if target.exists() && read_marker(&marker) == tag {
-        return Ok(None);
+    for old in [format!("{MOD_ID}.hmod"), format!("{MOD_ID}.hmod.partial"), ".spaceclient-release".into()] {
+        let path = mods.join(old);
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
     }
-    let bytes = client.get(&url).send().await?.error_for_status()?.bytes().await?;
-    let partial = mods.join(format!("{MOD_ID}.hmod.partial"));
-    std::fs::write(&partial, &bytes)?;
-    std::fs::rename(&partial, &target)?;
-    std::fs::write(&marker, &tag)?;
-    Ok(Some(tag))
+    set_mod(&instance.game_dir(), instance.install_client_mod)?;
+    Ok((!has_space_client(cfg)).then(|| {
+        "Horizon is Horizon's own Nightly for now: Space Client's build of it is not published yet.".to_string()
+    }))
 }
 
-/// Turns Space Client on in `horizon-mods.txt`, keeping every other line:
-/// Horizon starts each mod off until the player turns it on.
-pub fn enable_mod(game_dir: &Path) -> anyhow::Result<()> {
+/// Turns Space Client on or off in `horizon-mods.txt`, keeping every other
+/// line.
+pub fn set_mod(game_dir: &Path, on: bool) -> anyhow::Result<()> {
     std::fs::create_dir_all(game_dir)?;
     let file = game_dir.join("horizon-mods.txt");
     let text = std::fs::read_to_string(&file).unwrap_or_default();
-    let line = format!("mod.{MOD_ID}:true");
+    let line = format!("mod.{MOD_ID}:{on}");
     let mut lines: Vec<&str> = text
         .lines()
         .filter(|l| !l.trim_start().starts_with(&format!("mod.{MOD_ID}:")))
@@ -482,7 +542,7 @@ pub fn launch(
     }
     let home = instance.game_dir();
     std::fs::create_dir_all(&home)?;
-    enable_mod(&home)?;
+    set_mod(&home, instance.install_client_mod)?;
 
     let mut cmd = Command::new(&client);
     cmd.current_dir(&home)
@@ -545,7 +605,9 @@ mod tests {
         assert!(!install_game(&log, &cfg).await.expect("again"));
         prepare(&log, &cfg).await.expect("prepare");
         assert!(resources(&cfg).join("assets").is_dir() || resources(&cfg).is_dir());
-        assert_eq!(read_marker(&prepared_marker(&cfg)), read_marker(&installed_marker(&cfg)));
+        // Prepared for this build's preparer: a second look prepares nothing
+        let preparer = std::fs::read(game_dir(&cfg).join(format!("horizon-prepare{EXE}"))).unwrap();
+        assert_eq!(read_marker(&prepared_marker(&cfg)), hex::encode(Sha256::digest(&preparer)));
     }
 
     #[test]
@@ -553,12 +615,60 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sc-horizon-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("horizon-mods.txt"), "mod.zoom:true\nmod.spaceclient:false\nkey.zoom.zoom:key.keyboard.v\n").unwrap();
-        enable_mod(&dir).unwrap();
+        set_mod(&dir, true).unwrap();
         let text = std::fs::read_to_string(dir.join("horizon-mods.txt")).unwrap();
         assert!(text.contains("mod.zoom:true"));
         assert!(text.contains("key.zoom.zoom:key.keyboard.v"));
         assert!(text.contains("mod.spaceclient:true"));
         assert!(!text.contains("mod.spaceclient:false"));
+        set_mod(&dir, false).unwrap();
+        let text = std::fs::read_to_string(dir.join("horizon-mods.txt")).unwrap();
+        assert!(text.contains("mod.spaceclient:false") && !text.contains("mod.spaceclient:true"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_old_webassembly_mod_is_taken_out() {
+        let root = std::env::temp_dir().join(format!("sc-horizon-{}", uuid::Uuid::new_v4()));
+        let mut cfg = LauncherConfig::default();
+        cfg.install_path = root.join("mc").to_string_lossy().into_owned();
+        let inst = Instance {
+            id: "hz".into(),
+            name: "hz".into(),
+            path: root.join("hz").to_string_lossy().into_owned(),
+            mc_version: MC_VERSION.into(),
+            loader: LOADER.into(),
+            loader_version: String::new(),
+            version_id: LOADER.into(),
+            ram_mb: 4096,
+            install_client_mod: true,
+            created: String::new(),
+            last_played: 0,
+            play_count: 0,
+        };
+        let mods = inst.game_dir().join("horizon-mods");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(mods.join("spaceclient.hmod"), b"old").unwrap();
+        std::fs::write(mods.join(".spaceclient-release"), b"v.1.63.0").unwrap();
+        std::fs::write(mods.join("other.hmod"), b"theirs").unwrap();
+        // Not Space Client's build yet: said so
+        assert!(install_mod(&cfg, &inst).unwrap().is_some());
+        assert!(!mods.join("spaceclient.hmod").exists() && !mods.join(".spaceclient-release").exists());
+        assert!(mods.join("other.hmod").exists());
+        std::fs::create_dir_all(super::root(&cfg)).unwrap();
+        std::fs::write(flavour_marker(&cfg), "spaceclient").unwrap();
+        assert_eq!(install_mod(&cfg, &inst).unwrap(), None);
+        let text = std::fs::read_to_string(inst.game_dir().join("horizon-mods.txt")).unwrap();
+        assert!(text.contains("mod.spaceclient:true"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn space_clients_checksums_read() {
+        let hex = "ab".repeat(32);
+        let list = format!("{hex}  horizon-linux-x86_64.tar.gz\n{hex}  horizon-windows-x64.zip\n");
+        let sums = parse_sums(list.as_bytes()).unwrap();
+        assert_eq!(sums[1], ("horizon-windows-x64.zip".to_string(), hex.clone()));
+        assert!(parse_sums(b"nonsense line\n").is_err());
     }
 }
