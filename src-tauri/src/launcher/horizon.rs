@@ -464,9 +464,10 @@ fn hide_window(_cmd: &mut Command) {}
 /// the game is not Space Client's build yet.
 pub fn install_mod(cfg: &LauncherConfig, instance: &Instance) -> anyhow::Result<Option<String>> {
     let mods = instance.game_dir().join("horizon-mods");
-    for old in [format!("{MOD_ID}.hmod"), format!("{MOD_ID}.hmod.partial"), ".spaceclient-release".into()] {
-        let path = mods.join(old);
-        if path.exists() {
+    for path in old_space_client_mods(&mods) {
+        if path.is_dir() {
+            std::fs::remove_dir_all(&path)?;
+        } else {
             std::fs::remove_file(&path)?;
         }
     }
@@ -474,6 +475,50 @@ pub fn install_mod(cfg: &LauncherConfig, instance: &Instance) -> anyhow::Result<
     Ok((!has_space_client(cfg)).then(|| {
         "Horizon is Horizon's own Nightly for now: Space Client's build of it is not published yet.".to_string()
     }))
+}
+
+/// The WebAssembly Space Client in `horizon-mods/`, whatever its file is
+/// called (the launcher's `spaceclient.hmod`, a release's
+/// `spaceclient-horizon.hmod` put there by hand, an unpacked folder): every
+/// `.hmod` or mod folder whose manifest says `id = "spaceclient"`, and the
+/// launcher's own leftovers.
+fn old_space_client_mods(mods: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(mods) else { return Vec::new() };
+    let says_ours = |manifest: &str| {
+        manifest.lines().any(|l| {
+            let l = l.trim();
+            l.starts_with("id") && l.split_once('=').is_some_and(|(k, v)| k.trim() == "id" && v.trim().trim_matches('"') == MOD_ID)
+        })
+    };
+    let mut out = Vec::new();
+    for path in entries.flatten().map(|e| e.path()) {
+        let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+        if name == ".spaceclient-release" || name.ends_with(".hmod.partial") && name.starts_with(MOD_ID) {
+            out.push(path);
+        } else if name.ends_with(".hmod") && path.is_file() {
+            let ours = name.starts_with(MOD_ID)
+                || std::fs::File::open(&path)
+                    .ok()
+                    .and_then(|f| zip::ZipArchive::new(f).ok())
+                    .and_then(|mut z| {
+                        let mut file = z.by_name("horizon-mod.toml").ok()?;
+                        let mut text = String::new();
+                        std::io::Read::read_to_string(&mut file, &mut text).ok()?;
+                        Some(says_ours(&text))
+                    })
+                    .unwrap_or(false);
+            if ours {
+                out.push(path);
+            }
+        } else if path.is_dir() {
+            if let Ok(text) = std::fs::read_to_string(path.join("horizon-mod.toml")) {
+                if says_ours(&text) {
+                    out.push(path);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Turns Space Client on or off in `horizon-mods.txt`, keeping every other
@@ -651,9 +696,18 @@ mod tests {
         std::fs::write(mods.join("spaceclient.hmod"), b"old").unwrap();
         std::fs::write(mods.join(".spaceclient-release"), b"v.1.63.0").unwrap();
         std::fs::write(mods.join("other.hmod"), b"theirs").unwrap();
+        // The release's file, put there by hand under another name
+        {
+            let file = std::fs::File::create(mods.join("renamed.hmod")).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            zip.start_file("horizon-mod.toml", zip::write::FileOptions::default()).unwrap();
+            std::io::Write::write_all(&mut zip, b"id = \"spaceclient\"\nname = \"Space Client\"\n").unwrap();
+            zip.finish().unwrap();
+        }
         // Not Space Client's build yet: said so
         assert!(install_mod(&cfg, &inst).unwrap().is_some());
         assert!(!mods.join("spaceclient.hmod").exists() && !mods.join(".spaceclient-release").exists());
+        assert!(!mods.join("renamed.hmod").exists());
         assert!(mods.join("other.hmod").exists());
         std::fs::create_dir_all(super::root(&cfg)).unwrap();
         std::fs::write(flavour_marker(&cfg), "spaceclient").unwrap();
