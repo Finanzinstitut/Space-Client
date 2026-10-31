@@ -354,7 +354,160 @@ pub fn apply_to_horizon(cfg: &LauncherConfig, from: &Instance, to: &Instance) ->
         Ok(false) => {}
         Err(e) => eprintln!("settings sync: Space Client settings not carried into {} - {e}", to.name),
     }
+    match looks_to_horizon(from, to) {
+        Ok(true) => count += 1,
+        Ok(false) => {}
+        Err(e) => eprintln!("settings sync: Item Shower and Saturation not carried into {} - {e}", to.name),
+    }
     Ok(count)
+}
+
+/// The shader pack that is Saturation in Horizon: its folder in
+/// `shaderpacks/`, as `pickedShaderPack` in horizon-graphics.txt names it.
+pub const SATURATION_PACK: &str = "spaceclient-saturation";
+
+const SATURATION_TOML: &str = r#"schema = 1
+id = "spaceclient_saturation"
+name = "Space Client Saturation"
+version = "1.0.0"
+api = "0.1"
+description = "Space Client's Saturation, set in the Space Client launcher from the Java client's setting."
+
+[[post]]
+file = "post/saturation.wgsl"
+name = "Saturation"
+
+[[options]]
+id = "saturation"
+type = "float"
+default = {LEVEL}
+min = 0.0
+max = 2.0
+step = 0.05
+"#;
+
+const SATURATION_WGSL: &str = r#"// Space Client's Saturation: 1 leaves the colours alone, 0 is greyscale,
+// above 1 pushes them. The same weights as the Java client's shader.
+override saturation: f32 = {LEVEL};
+
+fn post(input: PostInput) -> vec4<f32> {
+    let c = input.color.rgb;
+    let grey = vec3<f32>(dot(c, vec3<f32>(0.3, 0.59, 0.11)));
+    return vec4<f32>(clamp(mix(grey, c, saturation), vec3<f32>(0.0), vec3<f32>(1.0)), input.color.a);
+}
+"#;
+
+/// `item.minecraft.totem_of_undying` (Java's description id, which the Java
+/// Item Shower keys by) as Horizon names the item: `minecraft:totem_of_undying`.
+pub fn item_id(description: &str) -> Option<String> {
+    if description == "*" {
+        return Some("*".into());
+    }
+    let (_kind, rest) = description.split_once('.')?;
+    let (namespace, path) = rest.split_once('.')?;
+    (!namespace.is_empty() && !path.is_empty()).then(|| format!("{namespace}:{path}"))
+}
+
+/// The Java Item Shower's sizes as Space Client for Horizon reads them:
+/// `<item>=<interface>,<hand>,<ground>` per line, `*` for every item.
+pub fn item_sizes_text(json: &serde_json::Value) -> String {
+    let sizes = |v: &serde_json::Value| {
+        let f = |k: &str| v[k].as_f64().unwrap_or(1.0);
+        format!("{},{},{}", f("hotbar"), f("hand"), f("ground"))
+    };
+    let mut out = String::new();
+    let section = &json["itemsizes"];
+    if section["global"].is_object() {
+        out += &format!("*={}\n", sizes(&section["global"]));
+    }
+    if let Some(items) = section["items"].as_object() {
+        let mut keys: Vec<&String> = items.keys().collect();
+        keys.sort();
+        for key in keys {
+            if let Some(id) = item_id(key) {
+                out += &format!("{id}={}\n", sizes(&items[key]));
+            }
+        }
+    }
+    out
+}
+
+/// What the Java Saturation module asks for, as Horizon's shader option:
+/// None when it is off or at 100 percent (colours left alone).
+pub fn saturation_level(json: &serde_json::Value) -> Option<f64> {
+    let module = &json["modules"]["saturation"];
+    if module["enabled"].as_bool() != Some(true) {
+        return None;
+    }
+    let percent = module["settings"]["level"].as_f64().unwrap_or(100.0).clamp(0.0, 200.0);
+    (percent != 100.0).then_some(percent / 100.0)
+}
+
+/// Sets `pickedShaderPack` in horizon-graphics.txt: our pack when `ours`,
+/// else clears it only where it still names ours, so a pack the player chose
+/// in Horizon stays.
+pub fn pick_shader_pack(text: &str, ours: bool) -> String {
+    let mut found = false;
+    let mut lines: Vec<String> = text
+        .lines()
+        .map(|line| match line.strip_prefix("pickedShaderPack:") {
+            Some(current) => {
+                found = true;
+                if ours {
+                    format!("pickedShaderPack:{SATURATION_PACK}")
+                } else if current == SATURATION_PACK {
+                    "pickedShaderPack:".into()
+                } else {
+                    line.to_string()
+                }
+            }
+            None => line.to_string(),
+        })
+        .collect();
+    if !found && ours {
+        lines.push(format!("pickedShaderPack:{SATURATION_PACK}"));
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    lines.join("\n") + "\n"
+}
+
+/// Item Shower's sizes and Saturation, from the Java setup into Horizon,
+/// every launch: Horizon has no screen for either, so the Java client is
+/// where they are set.
+pub fn looks_to_horizon(from: &Instance, to: &Instance) -> anyhow::Result<bool> {
+    let source = from.game_dir().join("config").join("spaceclient.json");
+    let Ok(text) = std::fs::read_to_string(&source) else { return Ok(false) };
+    let json: serde_json::Value = serde_json::from_str(&text)?;
+    let game = to.game_dir();
+    let mut changed = false;
+
+    let data = game.join("horizon-mods").join(".horizon-mod-data").join("spaceclient");
+    std::fs::create_dir_all(&data)?;
+    let sizes = item_sizes_text(&json);
+    let file = data.join("itemsizes");
+    if std::fs::read_to_string(&file).ok().as_deref() != Some(sizes.as_str()) {
+        std::fs::write(&file, &sizes)?;
+        changed = true;
+    }
+
+    let level = saturation_level(&json);
+    if let Some(level) = level {
+        let pack = game.join("shaderpacks").join(SATURATION_PACK);
+        std::fs::create_dir_all(pack.join("post"))?;
+        let value = format!("{level:.2}");
+        std::fs::write(pack.join("horizon-shaders.toml"), SATURATION_TOML.replace("{LEVEL}", &value))?;
+        std::fs::write(pack.join("post").join("saturation.wgsl"), SATURATION_WGSL.replace("{LEVEL}", &value))?;
+    }
+    let graphics = game.join("horizon-graphics.txt");
+    let own = std::fs::read_to_string(&graphics).unwrap_or_default();
+    let picked = pick_shader_pack(&own, level.is_some());
+    if picked != own && !(own.is_empty() && level.is_none()) {
+        std::fs::write(&graphics, picked)?;
+        changed = true;
+    }
+    Ok(changed)
 }
 
 /// Java's Space Client modules and the parts of Space Client for Horizon
@@ -521,6 +674,51 @@ mod tests {
         assert!(mods.contains("mod.spaceclient:true") && mods.contains("key.spaceclient.zoom:key.keyboard.v"));
         // Unchanged Java setup: nothing is written again
         assert!(!space_client_to_horizon(&java, &horizon).unwrap());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn item_shower_and_saturation_carry_into_horizon() {
+        assert_eq!(item_id("item.minecraft.totem_of_undying").as_deref(), Some("minecraft:totem_of_undying"));
+        assert_eq!(item_id("block.create.brass_casing").as_deref(), Some("create:brass_casing"));
+        assert_eq!(item_id("nonsense"), None);
+
+        let root = std::env::temp_dir().join(format!("sc-sync-look-{}", uuid::Uuid::new_v4()));
+        let java = inst("java", &root.join("java"), 3, 1);
+        let mut horizon = inst("hz", &root.join("hz"), 1, 2);
+        horizon.loader = "horizon".into();
+        std::fs::create_dir_all(java.game_dir().join("config")).unwrap();
+        let config = java.game_dir().join("config/spaceclient.json");
+        std::fs::write(
+            &config,
+            r#"{"modules":{"saturation":{"enabled":true,"settings":{"level":150}}},
+               "itemsizes":{"items":{"item.minecraft.totem_of_undying":{"hotbar":1.5,"hand":1.0,"ground":2.0}},
+                            "global":{"hotbar":1.0,"hand":0.8,"ground":1.0}}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(horizon.game_dir()).unwrap();
+        std::fs::write(horizon.game_dir().join("horizon-graphics.txt"), "preset:high\npickedShaderPack:\n").unwrap();
+
+        assert!(looks_to_horizon(&java, &horizon).unwrap());
+        let data = horizon.game_dir().join("horizon-mods/.horizon-mod-data/spaceclient");
+        assert_eq!(
+            std::fs::read_to_string(data.join("itemsizes")).unwrap(),
+            "*=1,0.8,1\nminecraft:totem_of_undying=1.5,1,2\n"
+        );
+        let graphics = std::fs::read_to_string(horizon.game_dir().join("horizon-graphics.txt")).unwrap();
+        assert_eq!(graphics, "preset:high\npickedShaderPack:spaceclient-saturation\n");
+        let pack = horizon.game_dir().join("shaderpacks").join(SATURATION_PACK);
+        assert!(std::fs::read_to_string(pack.join("horizon-shaders.toml")).unwrap().contains("default = 1.50"));
+        assert!(std::fs::read_to_string(pack.join("post/saturation.wgsl")).unwrap().contains("saturation: f32 = 1.50;"));
+        assert!(!looks_to_horizon(&java, &horizon).unwrap());
+
+        // Saturation off in Java: our pack is no longer picked
+        std::fs::write(&config, r#"{"modules":{"saturation":{"enabled":false}}}"#).unwrap();
+        assert!(looks_to_horizon(&java, &horizon).unwrap());
+        let graphics = std::fs::read_to_string(horizon.game_dir().join("horizon-graphics.txt")).unwrap();
+        assert_eq!(graphics, "preset:high\npickedShaderPack:\n");
+        // ... and a pack the player picked in Horizon is left alone
+        assert_eq!(pick_shader_pack("pickedShaderPack:theirs\n", false), "pickedShaderPack:theirs\n");
         let _ = std::fs::remove_dir_all(&root);
     }
 
