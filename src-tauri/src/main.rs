@@ -912,10 +912,14 @@ async fn launch_instance(
 
     // Shared keybinds, server list and Space Client setup, put in place while
     // nothing is reading them
-    // Not for Horizon: what is shared is Java's options and mods
-    if !horizon && !already_running {
+    // Horizon takes its own share: keybinds, resource packs, server list
+    if !already_running {
         let running: Vec<String> = state.running.lock().unwrap().keys().cloned().collect();
-        launcher::settings_sync::before_launch(&cfg, &inst, &running);
+        if horizon {
+            launcher::settings_sync::before_launch_horizon(&cfg, &inst, &running);
+        } else {
+            launcher::settings_sync::before_launch(&cfg, &inst, &running);
+        }
     }
 
     let join = launcher::serverprofiles::auto_join_address(&id);
