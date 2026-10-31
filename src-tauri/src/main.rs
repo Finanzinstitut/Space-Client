@@ -936,6 +936,17 @@ async fn launch_instance(
     let run = NEXT_RUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     state.running.lock().unwrap().entry(id.clone()).or_default().push((run, child));
 
+    // Now Playing for Space Client in Horizon: the launcher reads the player
+    // and the lyrics for the sandboxed mod while the game runs (music.rs)
+    if horizon && inst.install_client_mod {
+        let running = state.running.clone();
+        let watched = id.clone();
+        launcher::music::spawn_bridge(
+            inst.game_dir(),
+            std::sync::Arc::new(move || running.lock().map(|m| m.contains_key(&watched)).unwrap_or(false)),
+        );
+    }
+
     // Poll for the process ending so the console can close itself and the
     // entry does not linger in the registry.
     let running = state.running.clone();

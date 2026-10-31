@@ -18,6 +18,7 @@ pub mod loader;
 pub mod manifest;
 pub mod modpack;
 pub mod mods;
+pub mod music;
 pub mod progress;
 pub mod serverlist;
 pub mod serverprofiles;
